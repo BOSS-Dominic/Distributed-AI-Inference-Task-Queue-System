@@ -1,0 +1,10 @@
+# 分布式AI推理任务队列系统 — 项目配置
+
+# ── Docker 构建忽略 ──
+storage/
+__pycache__/
+*.pyc
+.git/
+.env
+*.md
+文档/

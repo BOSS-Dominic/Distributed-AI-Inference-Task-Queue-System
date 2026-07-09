@@ -1,0 +1,159 @@
+# ═══════════════════════════════════════════════════════════
+# 分布式AI推理任务队列 — Docker Compose 编排
+# 7个容器：Redis + FastAPI + GPU Worker + 2×CPU Worker
+#          + Workload Generator + Streamlit Dashboard
+# ═══════════════════════════════════════════════════════════
+
+services:
+  # ── 热数据中心（消息中间件 + 瞬时状态缓存）──
+  redis-broker:
+    image: redis:7-alpine
+    container_name: redis-broker
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # ── 异步接入网关（无状态 REST API）──
+  fastapi-gateway:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: fastapi-gateway
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./storage:/app/storage          # 唯一挂载点：统一输入输出
+    environment:
+      - REDIS_HOST=redis-broker
+    depends_on:
+      redis-broker:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── GPU 加速 Worker（RTX 5070 Ti 独占）──
+  worker-fast-gpu:
+    build:
+      context: ./workers
+      dockerfile: Dockerfile.fast
+    container_name: worker-fast-gpu
+    environment:
+      - WORKER_TYPE=FAST
+      - WORKER_NAME=worker-fast-gpu
+      - REDIS_HOST=redis-broker
+      - API_GATEWAY_URL=http://fastapi-gateway:8000
+    volumes:
+      - ./storage:/app/storage          # 唯一挂载点
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    depends_on:
+      redis-broker:
+        condition: service_healthy
+      fastapi-gateway:
+        condition: service_started
+    restart: unless-stopped
+
+  # ── CPU Worker 1（限制 1 核）──
+  worker-slow-cpu-1:
+    build:
+      context: ./workers
+      dockerfile: Dockerfile.slow
+    container_name: worker-slow-cpu-1
+    environment:
+      - WORKER_TYPE=SLOW
+      - WORKER_NAME=worker-slow-cpu-1
+      - REDIS_HOST=redis-broker
+      - API_GATEWAY_URL=http://fastapi-gateway:8000
+    volumes:
+      - ./storage:/app/storage
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+    depends_on:
+      redis-broker:
+        condition: service_healthy
+      fastapi-gateway:
+        condition: service_started
+    restart: unless-stopped
+
+  # ── CPU Worker 2（限制 1 核）──
+  worker-slow-cpu-2:
+    build:
+      context: ./workers
+      dockerfile: Dockerfile.slow
+    container_name: worker-slow-cpu-2
+    environment:
+      - WORKER_TYPE=SLOW
+      - WORKER_NAME=worker-slow-cpu-2
+      - REDIS_HOST=redis-broker
+      - API_GATEWAY_URL=http://fastapi-gateway:8000
+    volumes:
+      - ./storage:/app/storage
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+    depends_on:
+      redis-broker:
+        condition: service_healthy
+      fastapi-gateway:
+        condition: service_started
+    restart: unless-stopped
+
+  # ── 独立发压引擎（泊松到达过程，受限于 0.5 核）──
+  workload-generator:
+    build:
+      context: ./generator
+      dockerfile: Dockerfile
+    container_name: workload-generator
+    volumes:
+      - ./storage:/app/storage:rw       # 读写挂载：读种子 + 写CV图片
+    environment:
+      - API_GATEWAY_URL=http://fastapi-gateway:8000
+      - SEED_IMAGES_DIR=/app/storage/inputs/seeds
+      - PROMPTS_FILE=/app/storage/inputs/prompts.txt
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+    depends_on:
+      fastapi-gateway:
+        condition: service_started
+    # 发压器不自动启动 — 由 Dashboard 通过 docker exec 触发
+    command: ["tail", "-f", "/dev/null"]
+    restart: unless-stopped
+
+  # ── Web 控制台（实时监控 + 手动上传 + 历史审计）──
+  streamlit-dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    container_name: streamlit-dashboard
+    ports:
+      - "9501:8501"
+    volumes:
+      - ./storage:/app/storage          # 只读 SQLite + 文件上传
+      - /var/run/docker.sock:/var/run/docker.sock  # docker exec 权限
+    environment:
+      - REDIS_HOST=redis-broker
+      - API_GATEWAY_URL=http://fastapi-gateway:8000
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+    depends_on:
+      redis-broker:
+        condition: service_healthy
+      fastapi-gateway:
+        condition: service_started
+    restart: unless-stopped

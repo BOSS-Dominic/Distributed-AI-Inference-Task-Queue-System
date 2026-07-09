@@ -1,0 +1,27 @@
+# ───────────────────────────────────────────────
+# CPU Worker (Slow Node) — 轻量 CPU 镜像
+# ───────────────────────────────────────────────
+FROM python:3.10-slim
+
+# 构建工具（PyTorch 需要）
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential && rm -rf /var/lib/apt/lists/*
+
+# Python 包（CPU-only PyTorch — 从 PyTorch 官方源安装，其他从 PyPI）
+RUN pip install --no-cache-dir \
+    torch --index-url https://download.pytorch.org/whl/cpu
+RUN pip install --no-cache-dir \
+    transformers redis pillow requests
+
+WORKDIR /app
+COPY worker.py .
+
+# 预热：Docker build 阶段预下载 NLP 模型
+RUN python -c "\
+from transformers import pipeline;\
+print('Downloading NLP model...');\
+pipeline('sentiment-analysis', model='distilbert-base-uncased-finetuned-sst-2-english');\
+print('Model cached successfully.');\
+"
+
+CMD ["python", "worker.py"]

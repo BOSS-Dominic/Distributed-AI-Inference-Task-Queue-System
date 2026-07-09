@@ -1,0 +1,28 @@
+# ───────────────────────────────────────────────
+# GPU Worker (Fast Node) — CUDA 12.6 for RTX 5070 Ti (Blackwell)
+# ───────────────────────────────────────────────
+FROM nvidia/cuda:12.6.3-runtime-ubuntu22.04
+
+# 系统依赖
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip python3-dev build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python 包
+RUN pip3 install --no-cache-dir \
+    torch transformers redis pillow requests
+
+WORKDIR /app
+COPY worker.py .
+
+# 预热：Docker build 阶段预下载模型，运行时绝对离线
+RUN python3 -c "\
+from transformers import pipeline;\
+print('Downloading CV model...');\
+pipeline('image-classification', model='microsoft/resnet-18');\
+print('Downloading NLP model...');\
+pipeline('sentiment-analysis', model='distilbert-base-uncased-finetuned-sst-2-english');\
+print('Models cached successfully.');\
+"
+
+CMD ["python3", "worker.py"]
