@@ -1,11 +1,9 @@
-# ═══════════════════════════════════════════════════════════
-# 分布式AI推理任务队列 — Docker Compose 编排
-# 7个容器：Redis + FastAPI + GPU Worker + 2×CPU Worker
-#          + Workload Generator + Streamlit Dashboard
-# ═══════════════════════════════════════════════════════════
+# Distributed AI Inference Task Queue — Docker Compose
+# 7 services: Redis + FastAPI + GPU Worker + 2× CPU Worker
+# + Workload Generator + Streamlit Dashboard
 
 services:
-  # ── 热数据中心（消息中间件 + 瞬时状态缓存）──
+  #  Redis (message broker + state cache) 
   redis-broker:
     image: redis:7-alpine
     container_name: redis-broker
@@ -18,7 +16,7 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # ── 异步接入网关（无状态 REST API）──
+  #  FastAPI (stateless REST gateway) 
   fastapi-gateway:
     build:
       context: ./api
@@ -27,7 +25,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./storage:/app/storage          # 唯一挂载点：统一输入输出
+      - ./storage:/app/storage          # sole mount: I/O
     environment:
       - REDIS_HOST=redis-broker
     depends_on:
@@ -35,7 +33,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # ── GPU 加速 Worker（RTX 5070 Ti 独占）──
+  #  GPU Worker (RTX 5070 Ti) 
   worker-fast-gpu:
     build:
       context: ./workers
@@ -47,7 +45,7 @@ services:
       - REDIS_HOST=redis-broker
       - API_GATEWAY_URL=http://fastapi-gateway:8000
     volumes:
-      - ./storage:/app/storage          # 唯一挂载点
+      - ./storage:/app/storage          # sole mount
     deploy:
       resources:
         reservations:
@@ -62,7 +60,7 @@ services:
         condition: service_started
     restart: unless-stopped
 
-  # ── CPU Worker 1（限制 1 核）──
+  #  CPU Worker 1 (1 core) 
   worker-slow-cpu-1:
     build:
       context: ./workers
@@ -86,7 +84,7 @@ services:
         condition: service_started
     restart: unless-stopped
 
-  # ── CPU Worker 2（限制 1 核）──
+  #  CPU Worker 2 (1 core) 
   worker-slow-cpu-2:
     build:
       context: ./workers
@@ -110,14 +108,14 @@ services:
         condition: service_started
     restart: unless-stopped
 
-  # ── 独立发压引擎（泊松到达过程，受限于 0.5 核）──
+  #  Workload Generator (Poisson arrival, 0.5 core) 
   workload-generator:
     build:
       context: ./generator
       dockerfile: Dockerfile
     container_name: workload-generator
     volumes:
-      - ./storage:/app/storage:rw       # 读写挂载：读种子 + 写CV图片
+      - ./storage:/app/storage:rw       # read seeds + write output images
     environment:
       - API_GATEWAY_URL=http://fastapi-gateway:8000
       - SEED_IMAGES_DIR=/app/storage/inputs/seeds
@@ -129,11 +127,11 @@ services:
     depends_on:
       fastapi-gateway:
         condition: service_started
-    # 发压器不自动启动 — 由 Dashboard 通过 docker exec 触发
+    # not auto-started — triggered by Dashboard via docker exec
     command: ["tail", "-f", "/dev/null"]
     restart: unless-stopped
 
-  # ── Web 控制台（实时监控 + 手动上传 + 历史审计）──
+  #  Streamlit Dashboard (monitor + upload + audit) 
   streamlit-dashboard:
     build:
       context: ./dashboard
@@ -142,8 +140,8 @@ services:
     ports:
       - "9501:8501"
     volumes:
-      - ./storage:/app/storage          # 只读 SQLite + 文件上传
-      - /var/run/docker.sock:/var/run/docker.sock  # docker exec 权限
+      - ./storage:/app/storage          # read-only SQLite + file uploads
+      - /var/run/docker.sock:/var/run/docker.sock  # for docker exec
     environment:
       - REDIS_HOST=redis-broker
       - API_GATEWAY_URL=http://fastapi-gateway:8000

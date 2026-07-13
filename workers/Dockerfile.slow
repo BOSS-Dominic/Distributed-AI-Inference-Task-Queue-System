@@ -1,13 +1,13 @@
 # ───────────────────────────────────────────────
-# CPU Worker (Slow Node) — 轻量 CPU 镜像
+# CPU Worker (Slow Node) — lightweight CPU image
 # ───────────────────────────────────────────────
 FROM python:3.10-slim
 
-# 构建工具（PyTorch 需要）
+# build tools (for PyTorch)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential && rm -rf /var/lib/apt/lists/*
 
-# Python 包（CPU-only PyTorch — 从 PyTorch 官方源安装，其他从 PyPI）
+# Python packages (CPU-only PyTorch from official source, others from PyPI)
 RUN pip install --no-cache-dir \
     torch --index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir \
@@ -16,7 +16,7 @@ RUN pip install --no-cache-dir \
 WORKDIR /app
 COPY worker.py .
 
-# 预热：Docker build 阶段预下载 NLP 模型
+# warm-up: pre-download NLP models at build time
 RUN python -c "\
 from transformers import pipeline;\
 print('Downloading NLP model...');\

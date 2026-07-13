@@ -1,6 +1,5 @@
-# 分布式AI推理任务队列系统 — 项目配置
-
-# ── Docker 构建忽略 ──
+# Distributed AI Inference Task Queue — Project Config
+# Docker build ignore
 storage/
 __pycache__/
 *.pyc

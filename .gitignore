@@ -1,9 +1,9 @@
-# ---Git 忽略规则
+# Git ignore  
 
-# ── 项目文档 ──
+# Docs  
 文档/
 
-# ── 输入目录（种子图片）──
+# Input (seed images)  
 storage/inputs/*.jpg
 storage/inputs/*.jpeg
 storage/inputs/*.png
@@ -11,29 +11,29 @@ storage/inputs/*.webp
 storage/inputs/*.gif
 storage/inputs/*.bmp
 
-# 保留 prompts.txt 和 seeds/ 目录结构
+# keep prompts.txt and seeds/ dir structure
 !storage/inputs/seeds/
 !storage/inputs/seeds/*
 !storage/inputs/prompts.txt
 
-# ── 输出目录 ──
+# Output  
 storage/outputs/*
 !storage/outputs/.gitkeep
 
-# ── SQLite 数据库 ──
+# SQLite  
 storage/*.db
 storage/*.db-wal
 storage/*.db-shm
 
-# ── Python ──
+# Python  
 __pycache__/
 *.pyc
 *.pyo
 
-# ── 环境变量 ──
+# Env  
 .env
 
-# ── IDE 和 Agent 本地配置 ──
+# IDE / Agent local config  
 .vscode/
 .claude/
 .agents/
