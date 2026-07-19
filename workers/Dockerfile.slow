@@ -1,6 +1,4 @@
-# ───────────────────────────────────────────────
-# CPU Worker (Slow Node) — lightweight CPU image
-# ───────────────────────────────────────────────
+# CPU Worker (Generalist) — lightweight CPU image
 FROM python:3.10-slim
 
 # build tools (for PyTorch)
@@ -11,17 +9,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip install --no-cache-dir \
     torch --index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir \
-    transformers redis pillow requests
+    transformers redis pillow requests sentence-transformers
 
 WORKDIR /app
-COPY worker.py .
+COPY shared/ /app/shared/
+COPY workers/worker.py .
 
-# warm-up: pre-download NLP models at build time
+# warm-up: pre-download 3 CPU models at build time
 RUN python -c "\
-from transformers import pipeline;\
-print('Downloading NLP model...');\
+from transformers import pipeline, T5Tokenizer, T5ForConditionalGeneration;\
+from sentence_transformers import SentenceTransformer;\
+print('Downloading SBERT all-MiniLM-L6-v2...');\
+SentenceTransformer('all-MiniLM-L6-v2');\
+print('Downloading t5-small...');\
+T5Tokenizer.from_pretrained('t5-small');\
+T5ForConditionalGeneration.from_pretrained('t5-small');\
+print('Downloading DistilBERT SST-2...');\
 pipeline('sentiment-analysis', model='distilbert-base-uncased-finetuned-sst-2-english');\
-print('Model cached successfully.');\
+print('All 3 models cached successfully.');\
 "
 
 CMD ["python", "worker.py"]

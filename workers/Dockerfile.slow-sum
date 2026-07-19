@@ -1,0 +1,27 @@
+# CPU Worker (SUM Specialist) — t5-small only, ~240MB
+FROM python:3.10-slim
+
+# build tools (for PyTorch)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential && rm -rf /var/lib/apt/lists/*
+
+# Python packages (CPU-only PyTorch + transformers only)
+RUN pip install --no-cache-dir \
+    torch --index-url https://download.pytorch.org/whl/cpu
+RUN pip install --no-cache-dir \
+    transformers redis pillow requests
+
+WORKDIR /app
+COPY shared/ /app/shared/
+COPY workers/worker.py .
+
+# warm-up: t5-small only
+RUN python -c "\
+from transformers import T5Tokenizer, T5ForConditionalGeneration;\
+print('Downloading t5-small...');\
+T5Tokenizer.from_pretrained('t5-small');\
+T5ForConditionalGeneration.from_pretrained('t5-small');\
+print('Model cached successfully.');\
+"
+
+CMD ["python", "worker.py"]

@@ -1,6 +1,4 @@
-# ───────────────────────────────────────────────
 # GPU Worker (Fast Node) — CUDA 12.6 for RTX 5070 Ti (Blackwell)
-# ───────────────────────────────────────────────
 FROM nvidia/cuda:12.6.3-runtime-ubuntu22.04
 
 # system deps
@@ -10,19 +8,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Python packages
 RUN pip3 install --no-cache-dir \
-    torch transformers redis pillow requests
+    torch transformers redis pillow requests sentence-transformers
 
 WORKDIR /app
-COPY worker.py .
+COPY shared/ /app/shared/
+COPY workers/worker.py .
 
-# warm-up: pre-download models at build time, fully offline at runtime
+# warm-up: pre-download all 4 models at build time, fully offline at runtime
 RUN python3 -c "\
-from transformers import pipeline;\
-print('Downloading CV model...');\
-pipeline('image-classification', model='microsoft/resnet-18');\
-print('Downloading NLP model...');\
+from transformers import pipeline, BlipProcessor, BlipForConditionalGeneration, T5Tokenizer, T5ForConditionalGeneration;\
+from sentence_transformers import SentenceTransformer;\
+print('Downloading BLIP-base (image captioning)...');\
+BlipProcessor.from_pretrained('Salesforce/blip-image-captioning-base');\
+BlipForConditionalGeneration.from_pretrained('Salesforce/blip-image-captioning-base');\
+print('Downloading SBERT all-MiniLM-L6-v2 (semantic similarity)...');\
+SentenceTransformer('all-MiniLM-L6-v2');\
+print('Downloading t5-small (text summarization)...');\
+T5Tokenizer.from_pretrained('t5-small');\
+T5ForConditionalGeneration.from_pretrained('t5-small');\
+print('Downloading DistilBERT SST-2 (sentiment analysis)...');\
 pipeline('sentiment-analysis', model='distilbert-base-uncased-finetuned-sst-2-english');\
-print('Models cached successfully.');\
+print('All 4 models cached successfully.');\
 "
 
 CMD ["python3", "worker.py"]

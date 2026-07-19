@@ -1,6 +1,6 @@
 # Distributed AI Inference Task Queue — Docker Compose
-# 7 services: Redis + FastAPI + GPU Worker + 2× CPU Worker
-# + Workload Generator + Streamlit Dashboard
+# 9 services: Redis + FastAPI + GPU Worker + 2× CPU General Worker
+# + SIM Specialist + SUM Specialist + Workload Generator + Streamlit Dashboard
 
 services:
   #  Redis (message broker + state cache) 
@@ -19,8 +19,8 @@ services:
   #  FastAPI (stateless REST gateway) 
   fastapi-gateway:
     build:
-      context: ./api
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: api/Dockerfile
     container_name: fastapi-gateway
     ports:
       - "8000:8000"
@@ -33,11 +33,11 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  #  GPU Worker (RTX 5070 Ti) 
+  #  GPU Worker (RTX 5070 Ti, all 4 models)
   worker-fast-gpu:
     build:
-      context: ./workers
-      dockerfile: Dockerfile.fast
+      context: .
+      dockerfile: workers/Dockerfile.fast
     container_name: worker-fast-gpu
     environment:
       - WORKER_TYPE=FAST
@@ -60,11 +60,11 @@ services:
         condition: service_started
     restart: unless-stopped
 
-  #  CPU Worker 1 (1 core) 
+  #  CPU General Worker 1 (SBERT + t5 + DistilBERT, 1 core)
   worker-slow-cpu-1:
     build:
-      context: ./workers
-      dockerfile: Dockerfile.slow
+      context: .
+      dockerfile: workers/Dockerfile.slow
     container_name: worker-slow-cpu-1
     environment:
       - WORKER_TYPE=SLOW
@@ -84,11 +84,11 @@ services:
         condition: service_started
     restart: unless-stopped
 
-  #  CPU Worker 2 (1 core) 
+  #  CPU General Worker 2 (SBERT + t5 + DistilBERT, 1 core)
   worker-slow-cpu-2:
     build:
-      context: ./workers
-      dockerfile: Dockerfile.slow
+      context: .
+      dockerfile: workers/Dockerfile.slow
     container_name: worker-slow-cpu-2
     environment:
       - WORKER_TYPE=SLOW
@@ -108,11 +108,59 @@ services:
         condition: service_started
     restart: unless-stopped
 
-  #  Workload Generator (Poisson arrival, 0.5 core) 
+  #  SIM Specialist (SBERT only, ~80MB)
+  worker-sim-specialist:
+    build:
+      context: .
+      dockerfile: workers/Dockerfile.slow-sim
+    container_name: worker-sim-specialist
+    environment:
+      - WORKER_TYPE=SIM_SPECIALIST
+      - WORKER_NAME=worker-sim-specialist
+      - REDIS_HOST=redis-broker
+      - API_GATEWAY_URL=http://fastapi-gateway:8000
+    volumes:
+      - ./storage:/app/storage
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+    depends_on:
+      redis-broker:
+        condition: service_healthy
+      fastapi-gateway:
+        condition: service_started
+    restart: unless-stopped
+
+  #  SUM Specialist (t5-small only, ~240MB)
+  worker-sum-specialist:
+    build:
+      context: .
+      dockerfile: workers/Dockerfile.slow-sum
+    container_name: worker-sum-specialist
+    environment:
+      - WORKER_TYPE=SUM_SPECIALIST
+      - WORKER_NAME=worker-sum-specialist
+      - REDIS_HOST=redis-broker
+      - API_GATEWAY_URL=http://fastapi-gateway:8000
+    volumes:
+      - ./storage:/app/storage
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+    depends_on:
+      redis-broker:
+        condition: service_healthy
+      fastapi-gateway:
+        condition: service_started
+    restart: unless-stopped
+
+  #  Workload Generator (Poisson arrival, 0.5 core)
   workload-generator:
     build:
-      context: ./generator
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: generator/Dockerfile
     container_name: workload-generator
     volumes:
       - ./storage:/app/storage:rw       # read seeds + write output images
@@ -134,8 +182,8 @@ services:
   #  Streamlit Dashboard (monitor + upload + audit) 
   streamlit-dashboard:
     build:
-      context: ./dashboard
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: dashboard/Dockerfile
     container_name: streamlit-dashboard
     ports:
       - "9501:8501"
