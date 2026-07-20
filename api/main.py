@@ -1,5 +1,5 @@
 """
-FastAPI ingestion gateway — receives tasks, dispatches to Redis, writes audit logs to SQLite. v
+FastAPI ingestion gateway — receives tasks, dispatches to Redis, writes audit logs to SQLite. v1.4
 """
 
 import json
@@ -20,9 +20,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger("gateway")
 
+from shared.task_registry import TASK_REGISTRY
+
 app = FastAPI(
     title="Distributed AI Task Queue - Ingestion Gateway",
-    version="1.0",
+    version="1.4",
 )
 
 r = redis.Redis(
@@ -82,7 +84,15 @@ async def ingest_task(
     task_type: str = Form(...),
     file: UploadFile = File(None),
     text_data: str = Form(None),
+    text_data_2: str = Form(None),
 ):
+    if task_type not in TASK_REGISTRY:
+        return JSONResponse(
+            content={"status": "error", "detail": f"Unknown task_type: {task_type}"},
+            status_code=400,
+        )
+
+    R = TASK_REGISTRY[task_type]
     task_id = str(uuid.uuid4())
     task_payload = {
         "task_id": task_id,
@@ -90,7 +100,7 @@ async def ingest_task(
         "created_at": time.time(),
     }
 
-    if task_type == "CV" and file:
+    if R["requires_file"] and file:
         ext = os.path.splitext(file.filename or "image.jpg")[1] or ".jpg"
         safe_ext = ext if ext.lower() in {".jpg", ".jpeg", ".png", ".webp", ".bmp"} else ".jpg"
         file_path = os.path.join(INPUTS_DIR, f"{task_id}{safe_ext}")
@@ -100,15 +110,22 @@ async def ingest_task(
             buffer.write(content)
 
         task_payload["image_path"] = file_path
-        task_payload["input_summary"] = f"CV image: {file.filename} ({len(content)} bytes)"
-        r.lpush("queue:heavy", json.dumps(task_payload))
+        task_payload["input_summary"] = f"{task_type} image: {file.filename} ({len(content)} bytes)"
+
+    elif R.get("requires_text_pair"):
+        text1 = text_data or "The weather is nice today."
+        text2 = text_data_2 or "It is a beautiful day outside."
+        task_payload["text1"] = text1
+        task_payload["text2"] = text2
+        task_payload["input_summary"] = f"{task_type} pair: '{text1[:30]}...' vs '{text2[:30]}...'"
 
     else:
         text = text_data or "Default benchmark query."
         task_payload["text"] = text
-        task_payload["input_summary"] = f"NLP text: {text[:80]}..."
-        r.lpush("queue:light", json.dumps(task_payload))
+        task_payload["input_summary"] = f"{task_type} text: {text[:80]}..."
 
+    queue_name = f"queue:{R['queue']}"
+    r.lpush(queue_name, json.dumps(task_payload))
     r.hset("active:tasks", task_id, "PENDING")
 
     return JSONResponse(
