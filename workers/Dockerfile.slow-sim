@@ -1,4 +1,4 @@
-# CPU Worker (SIM Specialist) — SBERT only, ~80MB
+# CPU Worker (SIM Specialist) — SBERT only
 FROM python:3.10-slim
 
 # build tools (for PyTorch)
@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip install --no-cache-dir \
     torch --index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir \
-    redis pillow requests sentence-transformers
+    redis pillow requests sentence-transformers numpy
 
 WORKDIR /app
 COPY shared/ /app/shared/

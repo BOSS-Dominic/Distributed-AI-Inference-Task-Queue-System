@@ -1,4 +1,4 @@
-# GPU Worker (Fast Node) — CUDA 12.6 for RTX 5070 Ti (Blackwell)
+# GPU Worker (Fast Node) — CUDA 12.6 for RTX 5070 Ti
 FROM nvidia/cuda:12.6.3-runtime-ubuntu22.04
 
 # system deps
@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Python packages
 RUN pip3 install --no-cache-dir \
-    torch transformers redis pillow requests sentence-transformers
+    torch transformers redis pillow requests sentence-transformers numpy
 
 WORKDIR /app
 COPY shared/ /app/shared/

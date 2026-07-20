@@ -1,4 +1,4 @@
-# CPU Worker (SUM Specialist) — t5-small only, ~240MB
+# CPU Worker (SUM Specialist) — t5-small only
 FROM python:3.10-slim
 
 # build tools (for PyTorch)
@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip install --no-cache-dir \
     torch --index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir \
-    transformers redis pillow requests
+    transformers redis pillow requests numpy
 
 WORKDIR /app
 COPY shared/ /app/shared/

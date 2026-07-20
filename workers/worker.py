@@ -1,5 +1,6 @@
 """
-Worker node — heterogeneous GPU/CPU inference with Redis task queue. v1.0
+Worker node — heterogeneous GPU/CPU inference with Redis task queue. v1.4
+Registry — supports 4 task types across 5 workers.
 """
 
 import json
@@ -11,6 +12,7 @@ import sys
 import time
 import traceback
 
+import numpy as np
 import redis
 import requests
 import torch
@@ -24,22 +26,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+from shared.jailbreak_words import JAILBREAK_KEYWORDS
+
 REDIS_HOST = os.getenv("REDIS_HOST", "redis-broker")
 WORKER_TYPE = os.getenv("WORKER_TYPE", "SLOW")
 WORKER_NAME = os.getenv("WORKER_NAME",
-    "worker-fast-gpu" if WORKER_TYPE == "FAST" else f"worker-slow-cpu-{os.getpid()}")
+    "worker-fast-gpu" if WORKER_TYPE == "FAST" else f"worker-cpu-{os.getpid()}")
 API_GATEWAY = os.getenv("API_GATEWAY_URL", "http://fastapi-gateway:8000")
-GPU_SLOWDOWN_MS = float(os.getenv("GPU_SLOWDOWN_MS", "0"))
 ENABLE_STEALING = os.getenv("ENABLE_WORK_STEALING", "1") == "1"
 
-JAILBREAK_KEYWORDS = [
-    "ignore all previous", "do anything now", "dan ",
-    "system override", "disable safety", "bypass content",
-    "developer mode", "unethical ai", "maintenance mode",
-    "red-teaming", "filters disabled", "without restrictions",
-    "without any safeguards", "pretend you are",
-]
-
+# legacy compat
 if WORKER_TYPE == "FAST" and "FAST" in WORKER_NAME and WORKER_NAME.startswith("Worker_"):
     WORKER_NAME = "worker-fast-gpu"
 
@@ -51,7 +47,7 @@ r = redis.Redis(
 )
 
 
-# --- Device selection ---
+# Device selection
 
 if WORKER_TYPE == "FAST" and torch.cuda.is_available():
     DEVICE_ID = 0
@@ -64,36 +60,85 @@ else:
     else:
         logger.info("%s - constrained CPU-only mode", WORKER_NAME)
 
+# determine which task types each worker role can handle
+if WORKER_TYPE == "FAST":
+    VALID_TYPES = {"IC", "SA", "SIM", "SUM"}
+elif WORKER_TYPE == "SIM_SPECIALIST":
+    VALID_TYPES = {"SIM"}
+elif WORKER_TYPE == "SUM_SPECIALIST":
+    VALID_TYPES = {"SUM"}
+else:
+    VALID_TYPES = {"SA", "SIM", "SUM"}
 
-# --- Model loading ---
+logger.info("%s role: %s -> handles: %s", WORKER_NAME, WORKER_TYPE, sorted(VALID_TYPES))
+
+
+# Model loading
 
 logger.info("%s Loading models...", WORKER_NAME)
+ENGINES = {}
 
-nlp_engine = pipeline(
-    'sentiment-analysis',
-    model='distilbert-base-uncased-finetuned-sst-2-english',
-    device=DEVICE_ID,
-)
-
-cv_engine = None
-if WORKER_TYPE == "FAST":
+# BLIP (Image Captioning) — FAST Node only
+if "IC" in VALID_TYPES:
     try:
-        cv_engine = pipeline(
-            'image-classification',
-            model='microsoft/resnet-18',
+        from transformers import BlipProcessor, BlipForConditionalGeneration
+        blip_proc = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
+        blip_model = BlipForConditionalGeneration.from_pretrained(
+            "Salesforce/blip-image-captioning-base").to(DEVICE_ID if DEVICE_ID >= 0 else "cpu")
+        ENGINES["IC"] = (blip_proc, blip_model)
+        logger.info("%s IC engine (BLIP-base) loaded.", WORKER_NAME)
+    except Exception as e:
+        logger.error("%s IC engine load failed: %s", WORKER_NAME, e)
+
+# SBERT (Semantic Similarity) — FAST, SLOW, SIM_SPECIALIST
+if "SIM" in VALID_TYPES:
+    try:
+        from sentence_transformers import SentenceTransformer
+        sim_model = SentenceTransformer("all-MiniLM-L6-v2")
+        if DEVICE_ID >= 0 and WORKER_TYPE == "FAST":
+            sim_model = sim_model.to("cuda")
+        ENGINES["SIM"] = sim_model
+        logger.info("%s SIM engine (all-MiniLM-L6-v2) loaded.", WORKER_NAME)
+    except Exception as e:
+        logger.error("%s SIM engine load failed: %s", WORKER_NAME, e)
+
+# t5 (Text Summarization) — FAST, SLOW, SUM_SPECIALIST
+if "SUM" in VALID_TYPES:
+    try:
+        from transformers import T5Tokenizer, T5ForConditionalGeneration
+        t5_tok = T5Tokenizer.from_pretrained("t5-small")
+        t5_model = T5ForConditionalGeneration.from_pretrained("t5-small").to(
+            DEVICE_ID if DEVICE_ID >= 0 else "cpu")
+        ENGINES["SUM"] = (t5_tok, t5_model)
+        logger.info("%s SUM engine (t5-small) loaded.", WORKER_NAME)
+    except Exception as e:
+        logger.error("%s SUM engine load failed: %s", WORKER_NAME, e)
+
+# DistilBERT (Sentiment Analysis) — FAST, SLOW
+if "SA" in VALID_TYPES:
+    try:
+        sa_model = pipeline(
+            "sentiment-analysis",
+            model="distilbert-base-uncased-finetuned-sst-2-english",
             device=DEVICE_ID,
         )
-        logger.info("%s CV engine (ResNet-18) loaded on device=%s.", WORKER_NAME, DEVICE_ID)
+        ENGINES["SA"] = sa_model
+        logger.info("%s SA engine (DistilBERT) loaded.", WORKER_NAME)
     except Exception as e:
-        logger.error("%s CV engine load failed: %s", WORKER_NAME, e)
+        logger.error("%s SA engine load failed: %s", WORKER_NAME, e)
 
-logger.info("%s Models ready. Entering main loop.", WORKER_NAME)
+logger.info("%s Models ready (%d engines). Entering main loop.", WORKER_NAME, len(ENGINES))
+
+
+# Jailbreak check
+
+def _check_jailbreak(text: str) -> bool:
+    return any(kw in text.lower() for kw in JAILBREAK_KEYWORDS)
 
 
 # Audit write (HTTP callback -> SQLite fallback)
 
 def write_audit(audit_payload: dict):
-    # Primary: HTTP callback to FastAPI
     try:
         resp = requests.post(
             f"{API_GATEWAY}/v1/internal/audit",
@@ -105,7 +150,6 @@ def write_audit(audit_payload: dict):
     except requests.exceptions.RequestException as exc:
         logger.warning("%s Audit callback unreachable: %s", WORKER_NAME, exc)
 
-    # Fallback: direct SQLite write
     try:
         conn = sqlite3.connect("/app/storage/metrics.db")
         conn.execute("PRAGMA busy_timeout=5000;")
@@ -127,7 +171,7 @@ def write_audit(audit_payload: dict):
         logger.error("%s SQLite fallback failed: %s", WORKER_NAME, db_err)
 
 
-# --- Graceful shutdown ---
+# Graceful shutdown
 
 def shutdown(signum, frame):
     logger.info("%s Received signal %s, shutting down.", WORKER_NAME, signum)
@@ -137,7 +181,71 @@ signal.signal(signal.SIGTERM, shutdown)
 signal.signal(signal.SIGINT, shutdown)
 
 
-# --- Main loop ---
+# Task executors
+
+def execute_ic(payload: dict) -> str:
+    """BLIP image captioning."""
+    img_path = payload.get("image_path", "")
+    if not os.path.exists(img_path):
+        raise FileNotFoundError(f"Image not found: {img_path}")
+    pil_img = Image.open(img_path).convert("RGB")
+    blip_proc, blip_model = ENGINES["IC"]
+    inputs = blip_proc(pil_img, return_tensors="pt")
+    if DEVICE_ID >= 0:
+        inputs = {k: v.to("cuda") for k, v in inputs.items()}
+    out = blip_model.generate(**inputs, max_new_tokens=30)
+    caption = blip_proc.decode(out[0], skip_special_tokens=True)
+    return json.dumps({"caption": caption})
+
+
+def execute_sa(payload: dict) -> str:
+    """DistilBERT sentiment analysis (with jailbreak check)."""
+    text = payload.get("text", "Default query.")
+    if _check_jailbreak(text):
+        raise RuntimeError("JailbreakBlocked: prompt injection detected, request denied")
+    sa_model = ENGINES["SA"]
+    results = sa_model(text)
+    return f"{results[0]['label']} (score={results[0]['score']:.4f})"
+
+
+def execute_sim(payload: dict) -> str:
+    """SBERT semantic similarity (with jailbreak check)."""
+    text1 = payload.get("text1", "")
+    text2 = payload.get("text2", "")
+    combined = f"{text1} {text2}"
+    if _check_jailbreak(combined):
+        raise RuntimeError("JailbreakBlocked: prompt injection detected, request denied")
+    sim_model = ENGINES["SIM"]
+    emb = sim_model.encode([text1, text2])
+    score = float(np.dot(emb[0], emb[1]) / (np.linalg.norm(emb[0]) * np.linalg.norm(emb[1])))
+    return json.dumps({"similarity": round(score, 4)})
+
+
+def execute_sum(payload: dict) -> str:
+    """t5-small abstractive summarization (with jailbreak check)."""
+    text = payload.get("text", "")
+    if _check_jailbreak(text):
+        raise RuntimeError("JailbreakBlocked: prompt injection detected, request denied")
+    t5_tok, t5_model = ENGINES["SUM"]
+    prefix = "summarize: "
+    inputs = t5_tok(prefix + text, return_tensors="pt", max_length=512, truncation=True)
+    if DEVICE_ID >= 0:
+        inputs = {k: v.to("cuda") for k, v in inputs.items()}
+    summary_ids = t5_model.generate(inputs["input_ids"], max_length=60, num_beams=4,
+                                     early_stopping=True)
+    summary = t5_tok.decode(summary_ids[0], skip_special_tokens=True)
+    return summary
+
+
+EXECUTORS = {
+    "IC":  execute_ic,
+    "SA":  execute_sa,
+    "SIM": execute_sim,
+    "SUM": execute_sum,
+}
+
+
+# Main loop
 
 heartbeat_counter = 0
 logger.info("%s Main loop started.", WORKER_NAME)
@@ -172,6 +280,13 @@ while True:
 
     task_id = payload["task_id"]
     task_type = payload["task_type"]
+
+    # recycle tasks this worker cannot handle (specialist mismatch)
+    if task_type not in VALID_TYPES:
+        logger.info("%s Cannot handle %s, recycling to %s.", WORKER_NAME, task_type, queue_name)
+        r.lpush(queue_name, payload_str)
+        continue
+
     stolen_tag = " (stolen)" if stolen else ""
     logger.info("%s Processing %s task %s%s", WORKER_NAME, task_type, task_id, stolen_tag)
 
@@ -180,41 +295,24 @@ while True:
     model_output, final_status = "", "SUCCESS"
 
     try:
-        if task_type == "CV":
-            if cv_engine is None:
-                raise RuntimeError("CV engine not available")
-            img_path = payload.get("image_path", "")
-            if not os.path.exists(img_path):
-                raise FileNotFoundError(f"Image not found: {img_path}")
-            pil_img = Image.open(img_path).convert("RGB")
-            results = cv_engine(pil_img)
-            model_output = f"{results[0]['label']} ({results[0]['score']:.4f})"
-
-        elif task_type == "NLP":
-            text = payload.get("text", "Default query.")
-            text_lower = text.lower()
-            is_jailbreak = any(kw in text_lower for kw in JAILBREAK_KEYWORDS)
-            if is_jailbreak:
-                model_output = "JailbreakBlocked: prompt injection detected, request denied"
-                final_status = "FAILED"
-            else:
-                results = nlp_engine(text)
-                model_output = f"{results[0]['label']} (score={results[0]['score']:.4f})"
-        else:
+        executor = EXECUTORS.get(task_type)
+        if executor is None:
             model_output = f"Unknown task_type: {task_type}"
             final_status = "FAILED"
+        else:
+            model_output = executor(payload)
 
     except Exception as e:
+        err_msg = str(e)
         final_status = "FAILED"
-        model_output = f"{type(e).__name__}: {str(e)}"
+        if "JailbreakBlocked" in err_msg:
+            model_output = err_msg
+        else:
+            model_output = f"{type(e).__name__}: {err_msg}"
         logger.error("%s Task %s failed: %s", WORKER_NAME, task_id, model_output)
         traceback.print_exc()
 
     latency = time.time() - start_time
-
-    if WORKER_TYPE == "FAST" and GPU_SLOWDOWN_MS > 0:
-        time.sleep(GPU_SLOWDOWN_MS / 1000.0)
-        latency = time.time() - start_time
 
     r.hdel("active:tasks", task_id)
 
