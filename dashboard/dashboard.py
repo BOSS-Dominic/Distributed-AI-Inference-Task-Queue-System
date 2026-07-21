@@ -1,5 +1,5 @@
 """
-Streamlit dashboard — real-time monitoring and control for the task queue system. v1.0
+Streamlit dashboard — real-time monitoring and control for the task queue system. v1.4
 """
 
 import os
@@ -14,6 +14,8 @@ import redis
 import requests
 import streamlit as st
 from streamlit_option_menu import option_menu
+
+from shared.task_registry import TASK_REGISTRY
 
 st.set_page_config(
     layout="wide",
@@ -75,9 +77,11 @@ r = redis.Redis(
 )
 
 WORKER_TAGS = {
-    "worker-fast-gpu":   {"label": " GPU Worker",  "icon": "⚡", "color": "#a371f7", "gpu": True},
-    "worker-slow-cpu-1": {"label": " CPU Worker 1", "icon": "🐌", "color": "#2f81f7", "gpu": False},
-    "worker-slow-cpu-2": {"label": " CPU Worker 2", "icon": "🐌", "color": "#3fb950", "gpu": False},
+    "worker-fast-gpu":       {"label": " GPU (Generalist)",  "icon": "⚡", "color": "#a371f7", "gpu": True},
+    "worker-slow-cpu-1":     {"label": " CPU Generalist 1",  "icon": "🐌", "color": "#2f81f7", "gpu": False},
+    "worker-slow-cpu-2":     {"label": " CPU Generalist 2",  "icon": "🐌", "color": "#3fb950", "gpu": False},
+    "worker-sim-specialist": {"label": " SIM Specialist",    "icon": "", "color": "#2f81f7", "gpu": False},
+    "worker-sum-specialist": {"label": " SUM Specialist",    "icon": "", "color": "#d29922", "gpu": False},
 }
 
 
@@ -124,6 +128,10 @@ def get_work_stealing_status():
     except Exception:
         return True
 
+TASK_TYPES = list(TASK_REGISTRY.keys())
+TASK_COLORS = {t: TASK_REGISTRY[t]["color"] for t in TASK_TYPES}
+TASK_NAMES = {t: TASK_REGISTRY[t]["name"] for t in TASK_TYPES}
+
 def set_work_stealing(enabled: bool):
     try:
         r.set("config:work_stealing", "1" if enabled else "0")
@@ -134,14 +142,14 @@ def set_work_stealing(enabled: bool):
 
 
 
-
 @st.cache_data(ttl=10, show_spinner=False)
 def get_docker_stats():
     try:
         result = subprocess.run(
             ["docker", "stats", "--no-stream",
              "--format", "{{.Name}}\t{{.CPUPerc}}\t{{.MemPerc}}",
-             "worker-fast-gpu", "worker-slow-cpu-1", "worker-slow-cpu-2"],
+             "worker-fast-gpu", "worker-slow-cpu-1", "worker-slow-cpu-2",
+             "worker-sim-specialist", "worker-sum-specialist"],
             capture_output=True, text=True, timeout=3
         )
         stats = {}
@@ -193,12 +201,10 @@ def get_sqlite_summary():
 
         df_lat = pd.read_sql_query(
             "SELECT task_type, AVG(execution_latency) as avg_lat FROM task_history GROUP BY task_type", conn)
-        lat_nlp, lat_cv = None, None
+        lat_by_type = {}
         for _, row in df_lat.iterrows():
-            if row["task_type"] == "NLP" and pd.notnull(row["avg_lat"]):
-                lat_nlp = round(row["avg_lat"], 4)
-            elif row["task_type"] == "CV" and pd.notnull(row["avg_lat"]):
-                lat_cv = round(row["avg_lat"], 4)
+            if pd.notnull(row["avg_lat"]):
+                lat_by_type[row["task_type"]] = round(row["avg_lat"], 4)
 
         total = pd.read_sql_query("SELECT COUNT(*) FROM task_history", conn).iloc[0, 0]
         success = pd.read_sql_query(
@@ -213,13 +219,13 @@ def get_sqlite_summary():
 
         conn.close()
         return {
-            "throughput": throughput, "lat_nlp": lat_nlp, "lat_cv": lat_cv,
+            "throughput": throughput, "lat_by_type": lat_by_type,
             "db_ok": True, "total": total, "success": success, "failed": failed,
             "success_rate": success_rate, "avg_latency": avg_overall, "jailbreak": jailbreak,
         }
     except Exception:
         return {
-            "throughput": 0.0, "lat_nlp": None, "lat_cv": None,
+            "throughput": 0.0, "lat_by_type": {},
             "db_ok": False, "total": 0, "success": 0, "failed": 0,
             "success_rate": 0.0, "avg_latency": 0.0, "jailbreak": 0,
         }
@@ -349,29 +355,33 @@ def delete_all_logs():
 
 
 
-def submit_nlp(text: str):
+def submit_text(task_type: str, text: str, text2: str = None):
     try:
+        data = {"task_type": task_type, "text_data": text}
+        if text2:
+            data["text_data_2"] = text2
         resp = requests.post(
             f"{API_GATEWAY}/v1/inference/tasks",
-            data={"task_type": "NLP", "text_data": text}, timeout=10)
+            data=data, timeout=10)
         return resp.json(), resp.status_code
     except Exception as e:
         return {"error": str(e)}, 500
 
-def submit_cv(file_bytes, filename, mime_type):
+def submit_image(file_bytes, filename, mime_type):
     try:
         resp = requests.post(
             f"{API_GATEWAY}/v1/inference/tasks",
-            data={"task_type": "CV"},
+            data={"task_type": "IC"},
             files={"file": (filename, file_bytes, mime_type)}, timeout=15)
         return resp.json(), resp.status_code
     except Exception as e:
         return {"error": str(e)}, 500
 
-def trigger_workload(total: int, rate: float, cv: int = 0, nlp: int = 0):
+def trigger_workload(total: int, rate: float,
+                     ic: int = 0, sa: int = 0, sim: int = 0, sum_: int = 0):
     try:
         cmd = ["docker", "exec", "workload-generator", "python", "generator.py",
-               str(total), str(rate), str(cv), str(nlp)]
+               str(total), str(rate), str(ic), str(sa), str(sim), str(sum_)]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         clear_all_caches()
         return result.stdout, result.stderr
@@ -409,7 +419,7 @@ if page == "Overview":
         heartbeats = get_worker_heartbeats()
         s = get_sqlite_summary()
         throughput = s["throughput"]
-        lat_nlp, lat_cv = s["lat_nlp"], s["lat_cv"]
+        lat_by_type = s["lat_by_type"]
         db_ok = s["db_ok"]
         total, success, failed = s["total"], s["success"], s["failed"]
         success_rate, avg_lat, jailbreak = s["success_rate"], s["avg_latency"], s["jailbreak"]
@@ -443,8 +453,10 @@ if page == "Overview":
         with c1:
             with st.container(border=True):
                 st.markdown("##### Queue Length (Redis)")
+                heavy_label = f"Heavy ({'/'.join(TASK_REGISTRY[t]['name'][:4] for t in TASK_TYPES if TASK_REGISTRY[t]['queue']=='heavy')})"
+                light_label = f"Light ({'/'.join(TASK_REGISTRY[t]['name'][:4] for t in TASK_TYPES if TASK_REGISTRY[t]['queue']=='light')})"
                 fig1 = go.Figure(data=[
-                    go.Bar(x=['Heavy (CV)', 'Light (NLP)'],
+                    go.Bar(x=[heavy_label, light_label],
                            y=[stats["queue_heavy"], stats["queue_light"]],
                            marker_color=['#a371f7', '#2f81f7'],
                            text=[stats["queue_heavy"], stats["queue_light"]],
@@ -498,19 +510,14 @@ if page == "Overview":
                         events.append({"t": (row["submit_dt"] - t0).total_seconds(), "type": row["task_type"], "delta": 1})
                         events.append({"t": (row["done_dt"] - t0).total_seconds(), "type": row["task_type"], "delta": -1})
                     events.sort(key=lambda e: e["t"])
-                    cv_backlog = []
-                    nlp_backlog = []
+                    backlogs = {t: [] for t in TASK_TYPES}
+                    cur = {t: 0 for t in TASK_TYPES}
                     times = []
-                    cur_cv = 0
-                    cur_nlp = 0
                     for e in events:
-                        if e["type"] == "CV":
-                            cur_cv += e["delta"]
-                        else:
-                            cur_nlp += e["delta"]
+                        cur[e["type"]] += e["delta"]
                         times.append(e["t"])
-                        cv_backlog.append(max(0, cur_cv))
-                        nlp_backlog.append(max(0, cur_nlp))
+                        for t in TASK_TYPES:
+                            backlogs[t].append(max(0, cur[t]))
                     total_span = times[-1] - times[0] if times else 60
                     if total_span <= 0:
                         total_span = 60
@@ -524,14 +531,12 @@ if page == "Overview":
                         x_title = "Hours"
                         div = 3600
                     fig3 = go.Figure()
-                    fig3.add_trace(go.Scatter(
-                        x=[t / div for t in times], y=cv_backlog,
-                        mode='lines', name='CV Backlog', line=dict(color='#a371f7', width=2),
-                        fill='tozeroy', fillcolor='rgba(163,113,247,0.15)'))
-                    fig3.add_trace(go.Scatter(
-                        x=[t / div for t in times], y=nlp_backlog,
-                        mode='lines', name='NLP Backlog', line=dict(color='#2f81f7', width=2),
-                        fill='tozeroy', fillcolor='rgba(47,129,247,0.15)'))
+                    for t in TASK_TYPES:
+                        c = TASK_COLORS[t]
+                        fig3.add_trace(go.Scatter(
+                            x=[tv / div for tv in times], y=backlogs[t],
+                            mode='lines', name=f'{t} Backlog', line=dict(color=c, width=2),
+                            fill='tozeroy', fillcolor=f'rgba({int(c[1:3],16)},{int(c[3:5],16)},{int(c[5:7],16)},0.15)'))
                     fig3.update_layout(
                         margin=dict(l=0, r=0, t=10, b=0), height=260,
                         paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
@@ -596,27 +601,27 @@ elif page == "Tasks":
     st.title("📋 Tasks Management")
     st.markdown("<hr style='border-color: #30363d;'>", unsafe_allow_html=True)
 
-    tab_manual, tab_stress = st.tabs([" Manual Task Upload", " Stress Simulator"])
+    tab_manual, tab_stress = st.tabs([" Manual Upload", " Stress Simulator"])
 
     with tab_manual:
-        bcol1, bcol2 = st.columns(2)
+        man_tabs = st.tabs([" IC Image", " SA Sentiment", " SIM Similarity", " SUM Summary"])
 
-        with bcol1:
+        with man_tabs[0]:
             with st.container(border=True):
-                st.subheader("🖼️ Image Tasks (CV)")
+                st.subheader("🖼️ Image Captioning (IC)")
                 image_files = st.file_uploader(
                     "Select one or more images",
                     type=["jpg", "jpeg", "png", "webp", "bmp"],
-                    accept_multiple_files=True, key="manual_cv"
+                    accept_multiple_files=True, key="manual_ic"
                 )
                 if image_files:
                     st.caption(f"{len(image_files)} image(s) selected")
-                if st.button("📤 Submit Image Task(s)", type="primary", disabled=not image_files):
+                if st.button("📤 Submit IC Task(s)", type="primary", disabled=not image_files):
                     count_ok, count_fail = 0, 0
                     progress = st.progress(0)
                     for i, f in enumerate(image_files):
                         with st.spinner(f"Submitting {f.name} ({i+1}/{len(image_files)})..."):
-                            resp, code = submit_cv(f.getvalue(), f.name, f.type or "image/jpeg")
+                            resp, code = submit_image(f.getvalue(), f.name, f.type or "image/jpeg")
                         if code == 202:
                             count_ok += 1
                         else:
@@ -625,23 +630,23 @@ elif page == "Tasks":
                     clear_all_caches()
                     st.success(f"Done: {count_ok} accepted, {count_fail} failed out of {len(image_files)}")
 
-        with bcol2:
+        with man_tabs[1]:
             with st.container(border=True):
-                st.subheader("📝 Text Tasks (NLP)")
-                prompts_text = st.text_area(
+                st.subheader("💬 Sentiment Analysis (SA)")
+                sa_text = st.text_area(
                     "Enter prompt(s) - one per line",
                     value="The product arrived on time and works perfectly.\nI am extremely disappointed with the quality.\nThe customer service was very helpful.",
-                    height=150,
-                    help="Each non-empty line will be submitted as a separate NLP task. A single line = single task."
+                    height=120, key="manual_sa",
+                    help="Each non-empty line = one SA task."
                 )
-                lines = [ln.strip() for ln in prompts_text.strip().split("\n") if ln.strip()]
+                lines = [ln.strip() for ln in sa_text.strip().split("\n") if ln.strip()]
                 st.caption(f"{len(lines)} prompt(s) detected")
-                if st.button("📤 Submit Text Task(s)", type="primary", disabled=len(lines) == 0):
+                if st.button("📤 Submit SA Task(s)", type="primary", disabled=len(lines) == 0):
                     count_ok, count_fail = 0, 0
                     progress = st.progress(0)
                     for i, line in enumerate(lines):
-                        with st.spinner(f"Submitting prompt {i+1}/{len(lines)}..."):
-                            resp, code = submit_nlp(line)
+                        with st.spinner(f"Submitting {i+1}/{len(lines)}..."):
+                            resp, code = submit_text("SA", line)
                         if code == 202:
                             count_ok += 1
                         else:
@@ -651,42 +656,84 @@ elif page == "Tasks":
                     clear_all_caches()
                     st.success(f"Done: {count_ok} accepted, {count_fail} failed out of {len(lines)}")
 
+        with man_tabs[2]:
+            with st.container(border=True):
+                st.subheader("🔗 Semantic Similarity (SIM)")
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    sim_text1 = st.text_area("Sentence A", value="The weather is nice today.", height=80, key="sim_a")
+                with col_b:
+                    sim_text2 = st.text_area("Sentence B", value="It is a beautiful day outside.", height=80, key="sim_b")
+                if st.button("📤 Submit SIM Task", type="primary"):
+                    resp, code = submit_text("SIM", sim_text1, sim_text2)
+                    clear_all_caches()
+                    if code == 202:
+                        st.success(f"Accepted: {resp.get('task_id', '')}")
+                    else:
+                        st.error(f"Failed: {resp}")
+
+        with man_tabs[3]:
+            with st.container(border=True):
+                st.subheader("📝 Text Summarization (SUM)")
+                sum_text = st.text_area(
+                    "Enter a paragraph to summarize",
+                    value="Artificial intelligence has transformed many industries including healthcare, finance, and education. Machine learning models can now perform tasks that once required human expertise.",
+                    height=120, key="manual_sum",
+                    help="Longer text = better summary. t5-small on CPU may take 5-8s."
+                )
+                if st.button("📤 Submit SUM Task", type="primary", disabled=not sum_text.strip()):
+                    resp, code = submit_text("SUM", sum_text.strip())
+                    clear_all_caches()
+                    if code == 202:
+                        st.success(f"Accepted: {resp.get('task_id', '')}")
+                    else:
+                        st.error(f"Failed: {resp}")
+
     with tab_stress:
         with st.container(border=True):
             st.subheader("🌊 Poisson-Arrival Stress Simulator")
             if "total_tasks" not in st.session_state:
                 st.session_state.total_tasks = 30
-            if "stress_cv" not in st.session_state:
-                st.session_state.stress_cv = 10
-            if "stress_nlp" not in st.session_state:
-                st.session_state.stress_nlp = 20
+            if "stress_ic" not in st.session_state:
+                st.session_state.stress_ic = 8
+            if "stress_sa" not in st.session_state:
+                st.session_state.stress_sa = 8
+            if "stress_sim" not in st.session_state:
+                st.session_state.stress_sim = 7
+            if "stress_sum" not in st.session_state:
+                st.session_state.stress_sum = 7
 
             def on_total_change():
-                if st.session_state.stress_cv > st.session_state.total_tasks:
-                    st.session_state.stress_cv = st.session_state.total_tasks
-                st.session_state.stress_nlp = st.session_state.total_tasks - st.session_state.stress_cv
+                remain = st.session_state.total_tasks - st.session_state.stress_ic - st.session_state.stress_sa - st.session_state.stress_sim
+                if remain < 0:
+                    st.session_state.stress_sum = 0
+                else:
+                    st.session_state.stress_sum = remain
 
-            def on_cv_change():
-                st.session_state.stress_nlp = st.session_state.total_tasks - st.session_state.stress_cv
-
-            def on_nlp_change():
-                st.session_state.stress_cv = st.session_state.total_tasks - st.session_state.stress_nlp
+            def on_type_change():
+                pass
 
             total = st.slider("Total Tasks", 10, 500, step=10, key="total_tasks", on_change=on_total_change)
 
-            ca, cb = st.columns(2)
-            with ca:
-                cv_count = st.slider("CV Tasks (Image)", 0, total, key="stress_cv", on_change=on_cv_change, help="CV tasks count. NLP will auto-adjust to Total - CV.")
-            with cb:
-                nlp_count = st.slider("NLP Tasks (Text)", 0, total, key="stress_nlp", on_change=on_nlp_change, help="NLP tasks count. CV will auto-adjust to Total - NLP.")
+            c1, c2 = st.columns(2)
+            with c1:
+                ic_count = st.slider("IC (Image Captioning)", 0, total, key="stress_ic", on_change=on_total_change)
+                sa_count = st.slider("SA (Sentiment)", 0, total, key="stress_sa", on_change=on_total_change)
+            with c2:
+                sim_count = st.slider("SIM (Similarity)", 0, total, key="stress_sim", on_change=on_total_change)
+                sum_count = st.slider("SUM (Summarization)", 0, total, key="stress_sum", on_change=on_total_change)
 
+            actual_total = ic_count + sa_count + sim_count + sum_count
             arate = st.slider("Arrival Rate λ (tasks/s)", 5.0, 100.0, 20.0, 5.0)
-            jb_estimate = max(1, nlp_count // 10)
-            st.caption(f"CV: {cv_count}  |  NLP: {nlp_count}  |  ~{jb_estimate} jailbreak  |  ~{total / arate:.0f}s expected")
+            jb_est = max(1, (sa_count + sim_count + sum_count) // 10)
+            if actual_total > 0:
+                st.caption(f"IC: {ic_count} | SA: {sa_count} | SIM: {sim_count} | SUM: {sum_count} | ~{jb_est} jailbreak | ~{actual_total/arate:.0f}s expected")
+            else:
+                st.caption("Set at least one task type count > 0")
 
             if st.button("🚀 Inject Poisson Workload", type="primary"):
-                with st.spinner(f"Injecting {total} tasks @ λ={arate}..."):
-                    stdout, stderr = trigger_workload(total, arate, cv_count, nlp_count)
+                with st.spinner(f"Injecting {actual_total} tasks @ λ={arate}..."):
+                    stdout, stderr = trigger_workload(actual_total, arate, ic_count, sa_count, sim_count, sum_count)
                 if stdout:
                     st.success("Done!")
                     with st.expander("Generator Log", expanded=True):
@@ -769,7 +816,7 @@ elif page == "Workers":
                         total_w = sum(values)
                         fig_w = go.Figure(data=[go.Pie(
                             labels=labels, values=values, hole=0.5,
-                            marker_colors=['#a371f7' if t == 'CV' else '#2f81f7' for t in labels],
+                            marker_colors=[TASK_COLORS.get(t, '#808080') for t in labels],
                             textinfo='percent', textfont=dict(color='white')
                         )])
                         fig_w.update_layout(
@@ -793,7 +840,7 @@ elif page == "Metrics":
     @fragment_decorator(run_every="5s")
     def render_metrics():
         s = get_sqlite_summary()
-        _, lat_nlp, lat_cv = None, s["lat_nlp"], s["lat_cv"]
+        _, lat_by_type = None, s["lat_by_type"]
         db_ok, total = s["db_ok"], s["total"]
         success, failed = s["success"], s["failed"]
         success_rate, avg_lat, jailbreak = s["success_rate"], s["avg_latency"], s["jailbreak"]
@@ -817,13 +864,13 @@ elif page == "Metrics":
                 if not ts_df.empty:
                     ts_df_rev = ts_df.iloc[::-1]
                     fig_ts = go.Figure()
-                    for ttype, color in [("NLP", "#2f81f7"), ("CV", "#a371f7")]:
+                    for ttype in TASK_TYPES:
                         sub = ts_df_rev[ts_df_rev["task_type"] == ttype]
                         if not sub.empty:
                             fig_ts.add_trace(go.Scatter(
                                 x=list(range(len(sub))), y=sub["execution_latency"],
-                                mode='lines+markers', name=ttype,
-                                line=dict(color=color, width=1.5), marker=dict(size=3)
+                                mode='lines+markers', name=TASK_NAMES.get(ttype, ttype),
+                                line=dict(color=TASK_COLORS[ttype], width=1.5), marker=dict(size=3)
                             ))
                     fig_ts.update_layout(
                         margin=dict(l=0, r=0, t=10, b=0), height=350,
@@ -840,19 +887,17 @@ elif page == "Metrics":
         with ch2:
             with st.container(border=True):
                 st.markdown("##### Avg Latency by Task Type")
-                nlp_val = lat_nlp if lat_nlp is not None else 0
-                cv_val = lat_cv if lat_cv is not None else 0
-                nlp_label = f"{nlp_val}s" if lat_nlp is not None else "N/A"
-                cv_label = f"{cv_val}s" if lat_cv is not None else "N/A"
-
-                fig_bar = go.Figure(data=[
-                    go.Bar(name='NLP', x=['NLP'], y=[nlp_val], marker_color='#2f81f7', width=0.4,
-                           text=[nlp_label], textposition='outside', textfont=dict(color='gray')),
-                    go.Bar(name='CV', x=['CV'], y=[cv_val], marker_color='#a371f7', width=0.4,
-                           text=[cv_label], textposition='outside', textfont=dict(color='gray'))
-                ])
-                y_max = max(nlp_val, cv_val) * 1.5 + 0.5 if max(nlp_val, cv_val) > 0 else 5
-                fig_bar.update_layout(
+                if lat_by_type:
+                    fig_bar = go.Figure()
+                    for ttype in TASK_TYPES:
+                        val = lat_by_type.get(ttype, 0)
+                        label = f"{val}s" if ttype in lat_by_type else "N/A"
+                        fig_bar.add_trace(go.Bar(
+                            name=TASK_NAMES.get(ttype, ttype), x=[ttype], y=[val],
+                            marker_color=TASK_COLORS[ttype], width=0.4,
+                            text=[label], textposition='outside', textfont=dict(color='gray')))
+                    y_max = max(lat_by_type.values()) * 1.5 + 0.5 if lat_by_type else 5
+                    fig_bar.update_layout(
                     margin=dict(l=0, r=0, t=10, b=0), height=350,
                     paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False,
                     yaxis=dict(showgrid=True, gridcolor='rgba(128,128,128,0.2)', color='gray', range=[0, y_max]),
@@ -870,7 +915,7 @@ elif page == "Metrics":
                     fig_type = go.Figure(data=[go.Pie(
                         labels=type_counts.index.tolist(),
                         values=type_counts.values.tolist(),
-                        hole=0.5, marker_colors=['#2f81f7', '#a371f7'],
+                        hole=0.5, marker_colors=[TASK_COLORS.get(t, '#808080') for t in type_counts.index.tolist()],
                         textinfo='label+percent', textfont=dict(color='white')
                     )])
                     fig_type.update_layout(
@@ -892,7 +937,7 @@ elif page == "Metrics":
                             x=exec_df["task_type"], y=exec_df["total_time"],
                             text=[f"{t:.2f}s<br>({c} tasks)" for t, c in zip(exec_df["total_time"], exec_df["cnt"])],
                             textposition='outside', textfont=dict(color='gray'),
-                            marker_color=['#2f81f7' if t == 'NLP' else '#a371f7' for t in exec_df["task_type"]],
+                            marker_color=[TASK_COLORS.get(t, '#808080') for t in exec_df["task_type"]],
                         )
                     ])
                     fig_bar2.update_layout(
@@ -1132,9 +1177,9 @@ elif page == "Settings":
             sc1, sc2 = st.columns([2, 1])
             with sc1:
                 if stealing_enabled:
-                    st.markdown("**Status:** 🟢 **ENABLED** - GPU Worker will steal NLP tasks when Heavy queue is empty.")
+                    st.markdown("**Status:** 🟢 **ENABLED** - GPU Worker will steal light-queue tasks when Heavy queue is empty.")
                 else:
-                    st.markdown("**Status:** 🔴 **DISABLED** - GPU Worker only processes Heavy (CV) queue. Light queue is CPU-only.")
+                    st.markdown("**Status:** 🔴 **DISABLED** - GPU Worker only processes Heavy queue. Light queue is CPU-only.")
 
             with sc2:
                 if stealing_enabled:
@@ -1176,7 +1221,7 @@ elif page == "Settings":
         st.markdown("---")
         s4, s5 = st.columns(2)
         with s4:
-            st.markdown(f"**Workers:** {len(WORKER_TAGS)} (1 GPU + 2 CPU)")
+            st.markdown(f"**Workers:** {len(WORKER_TAGS)} (1 GPU Generalist + 2 CPU Generalists + SIM Specialist + SUM Specialist)")
             st.markdown(f"**GPU Device:** RTX 5070 Ti (Passthrough)")
         with s5:
             st.markdown(f"**CPU Worker Limit:** 1.0 core each")
