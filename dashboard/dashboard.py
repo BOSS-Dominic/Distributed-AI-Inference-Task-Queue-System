@@ -704,24 +704,28 @@ elif page == "Tasks":
                 st.session_state.stress_sum = 7
 
             def on_total_change():
-                remain = st.session_state.total_tasks - st.session_state.stress_ic - st.session_state.stress_sa - st.session_state.stress_sim
-                if remain < 0:
-                    st.session_state.stress_sum = 0
-                else:
-                    st.session_state.stress_sum = remain
+                n = st.session_state.total_tasks // 4
+                st.session_state.stress_ic = n
+                st.session_state.stress_sa = n
+                st.session_state.stress_sim = n
+                st.session_state.stress_sum = st.session_state.total_tasks - n * 3
 
             def on_type_change():
-                pass
+                # recalc total from the 4 sliders
+                st.session_state.total_tasks = (
+                    st.session_state.stress_ic + st.session_state.stress_sa +
+                    st.session_state.stress_sim + st.session_state.stress_sum
+                )
 
-            total = st.slider("Total Tasks", 10, 500, step=10, key="total_tasks", on_change=on_total_change)
+            total = st.slider("Total Tasks", 10, 2000, step=10, key="total_tasks", on_change=on_total_change)
 
             c1, c2 = st.columns(2)
             with c1:
-                ic_count = st.slider("IC (Image Captioning)", 0, total, key="stress_ic", on_change=on_total_change)
-                sa_count = st.slider("SA (Sentiment)", 0, total, key="stress_sa", on_change=on_total_change)
+                ic_count = st.slider("IC (Image Captioning)", 0, 500, key="stress_ic", on_change=on_type_change)
+                sa_count = st.slider("SA (Sentiment)", 0, 500, key="stress_sa", on_change=on_type_change)
             with c2:
-                sim_count = st.slider("SIM (Similarity)", 0, total, key="stress_sim", on_change=on_total_change)
-                sum_count = st.slider("SUM (Summarization)", 0, total, key="stress_sum", on_change=on_total_change)
+                sim_count = st.slider("SIM (Similarity)", 0, 500, key="stress_sim", on_change=on_type_change)
+                sum_count = st.slider("SUM (Summarization)", 0, 500, key="stress_sum", on_change=on_type_change)
 
             actual_total = ic_count + sa_count + sim_count + sum_count
             arate = st.slider("Arrival Rate λ (tasks/s)", 5.0, 100.0, 20.0, 5.0)
@@ -887,8 +891,8 @@ elif page == "Metrics":
         with ch2:
             with st.container(border=True):
                 st.markdown("##### Avg Latency by Task Type")
+                fig_bar = go.Figure()
                 if lat_by_type:
-                    fig_bar = go.Figure()
                     for ttype in TASK_TYPES:
                         val = lat_by_type.get(ttype, 0)
                         label = f"{val}s" if ttype in lat_by_type else "N/A"
@@ -896,8 +900,8 @@ elif page == "Metrics":
                             name=TASK_NAMES.get(ttype, ttype), x=[ttype], y=[val],
                             marker_color=TASK_COLORS[ttype], width=0.4,
                             text=[label], textposition='outside', textfont=dict(color='gray')))
-                    y_max = max(lat_by_type.values()) * 1.5 + 0.5 if lat_by_type else 5
-                    fig_bar.update_layout(
+                y_max = max(lat_by_type.values()) * 1.5 + 0.5 if lat_by_type else 5
+                fig_bar.update_layout(
                     margin=dict(l=0, r=0, t=10, b=0), height=350,
                     paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False,
                     yaxis=dict(showgrid=True, gridcolor='rgba(128,128,128,0.2)', color='gray', range=[0, y_max]),
