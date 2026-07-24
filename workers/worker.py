@@ -231,7 +231,7 @@ def execute_sum(payload: dict) -> str:
     inputs = t5_tok(prefix + text, return_tensors="pt", max_length=512, truncation=True)
     if DEVICE_ID >= 0:
         inputs = {k: v.to("cuda") for k, v in inputs.items()}
-    summary_ids = t5_model.generate(inputs["input_ids"], max_length=60, num_beams=4,
+    summary_ids = t5_model.generate(inputs["input_ids"], max_length=30, num_beams=1,
                                      early_stopping=True)
     summary = t5_tok.decode(summary_ids[0], skip_special_tokens=True)
     return summary
@@ -271,6 +271,8 @@ while True:
             r.set(f"worker:{WORKER_NAME}:heartbeat", "alive", ex=15)
         continue
 
+    r.set(f"worker:{WORKER_NAME}:heartbeat", "alive", ex=15)
+
     queue_name, payload_str = task_data
     try:
         payload = json.loads(payload_str)
@@ -284,7 +286,7 @@ while True:
     # recycle tasks this worker cannot handle (specialist mismatch)
     if task_type not in VALID_TYPES:
         logger.info("%s Cannot handle %s, recycling to %s.", WORKER_NAME, task_type, queue_name)
-        r.lpush(queue_name, payload_str)
+        r.rpush(queue_name, payload_str)
         continue
 
     stolen_tag = " (stolen)" if stolen else ""

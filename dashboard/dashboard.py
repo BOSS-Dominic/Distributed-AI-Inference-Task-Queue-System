@@ -808,9 +808,9 @@ elif page == "Workers":
 
         st.subheader("Task Type Distribution per Worker")
         if not dist_df.empty:
-            worker_names = dist_df["worker_name"].unique()
-            wcols = st.columns(len(worker_names))
-            for j, wname in enumerate(worker_names):
+            ordered_names = [n for n in WORKER_TAGS if n in dist_df["worker_name"].values]
+            wcols = st.columns(len(ordered_names))
+            for j, wname in enumerate(ordered_names):
                 wdf = dist_df[dist_df["worker_name"] == wname]
                 with wcols[j]:
                     with st.container(border=True):
@@ -1206,9 +1206,6 @@ elif page == "Settings":
         | Component | Current Strategy | Description |
         |-----------|-----------------|-------------|
         | **Queue Discipline** | **FIFO** (BLPOP) | First-in-first-out via Redis blocking pop |
-        | **Priority Scheduling** | None (planned 7/16) | Coming in Phase 2 |
-        | **Retry Mechanism** | None (planned 7/23) | Exponential backoff retry coming in Phase 3 |
-        | **Dead Letter Queue** | None (planned 7/23) | DLQ for tasks exceeding max retries coming in Phase 3 |
         """)
 
     st.markdown("<br>", unsafe_allow_html=True)
