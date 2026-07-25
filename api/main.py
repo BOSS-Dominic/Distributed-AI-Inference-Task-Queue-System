@@ -1,5 +1,5 @@
 """
-FastAPI ingestion gateway — receives tasks, dispatches to Redis, writes audit logs to SQLite. v1.4
+FastAPI ingestion gateway — receives tasks, dispatches to Redis, writes audit logs to SQLite. v1.5
 """
 
 import json
@@ -20,11 +20,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger("gateway")
 
-from shared.task_registry import TASK_REGISTRY
+from shared.task_registry import TASK_REGISTRY, PRIORITY_LEVELS, DEFAULT_PRIORITY
 
 app = FastAPI(
     title="Distributed AI Task Queue - Ingestion Gateway",
-    version="1.4",
+    version="1.5",
 )
 
 r = redis.Redis(
@@ -48,6 +48,8 @@ def startup():
     r.delete("queue:heavy", "queue:light", "active:tasks")
     for key in r.keys("worker:*:heartbeat"):
         r.delete(key)
+    if r.get("config:queue_mode") is None:
+        r.set("config:queue_mode", "fifo")
     print("[Gateway] Startup complete. SQLite WAL mode active. Redis connected.")
 
 
@@ -85,10 +87,16 @@ async def ingest_task(
     file: UploadFile = File(None),
     text_data: str = Form(None),
     text_data_2: str = Form(None),
+    priority: str = Form(DEFAULT_PRIORITY),
 ):
     if task_type not in TASK_REGISTRY:
         return JSONResponse(
             content={"status": "error", "detail": f"Unknown task_type: {task_type}"},
+            status_code=400,
+        )
+    if priority not in PRIORITY_LEVELS:
+        return JSONResponse(
+            content={"status": "error", "detail": f"Unknown priority: {priority}"},
             status_code=400,
         )
 
@@ -97,6 +105,7 @@ async def ingest_task(
     task_payload = {
         "task_id": task_id,
         "task_type": task_type,
+        "priority": priority,
         "created_at": time.time(),
     }
 

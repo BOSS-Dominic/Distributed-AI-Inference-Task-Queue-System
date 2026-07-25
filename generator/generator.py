@@ -1,7 +1,7 @@
 """
-Workload generator — injects tasks using a Poisson arrival process. v1.4
+Workload generator — injects tasks using a Poisson arrival process. v1.5
 Invoked by Dashboard via:
-  docker exec workload-generator python generator.py <total> <rate> <ic> <sa> <sim> <sum>
+  docker exec workload-generator python generator.py <total> <rate> <ic> <sa> <sim> <sum> [priority mix]
 """
 
 import logging
@@ -21,6 +21,9 @@ logger = logging.getLogger("generator")
 
 from shared.jailbreak_words import JAILBREAK_PAYLOADS
 from shared.task_registry import TASK_REGISTRY
+
+PRIORITY_KEYS = ["HIGH", "MEDIUM", "LOW"]
+DEFAULT_PRIORITY_MIX = (2, 5, 3)  # HIGH:MEDIUM:LOW ratio
 
 API_GATEWAY = os.getenv("API_GATEWAY_URL", "http://fastapi-gateway:8000")
 SEED_IMAGES_DIR = os.getenv("SEED_IMAGES_DIR", "/app/storage/inputs/seeds")
@@ -128,9 +131,10 @@ def inject_workload(total_tasks: int = 30, arrival_rate: float = 20.0,
                 else:
                     text1 = random.choice(_seed_prompts)
                     text2 = random.choice(_seed_prompts)
+                prio = random.choices(PRIORITY_KEYS, weights=DEFAULT_PRIORITY_MIX, k=1)[0]
                 resp = requests.post(
                     f"{API_GATEWAY}/v1/inference/tasks",
-                    data={"task_type": task_type, "text_data": text1, "text_data_2": text2},
+                    data={"task_type": task_type, "text_data": text1, "text_data_2": text2, "priority": prio},
                     timeout=10,
                 )
                 if resp.status_code == 202:
@@ -152,9 +156,11 @@ def inject_workload(total_tasks: int = 30, arrival_rate: float = 20.0,
                     jailbreak_count += 1
                 else:
                     text = random.choice(_seed_prompts)
+
+                prio = random.choices(PRIORITY_KEYS, weights=DEFAULT_PRIORITY_MIX, k=1)[0]
                 resp = requests.post(
                     f"{API_GATEWAY}/v1/inference/tasks",
-                    data={"task_type": task_type, "text_data": text},
+                    data={"task_type": task_type, "text_data": text, "priority": prio},
                     timeout=10,
                 )
                 if resp.status_code == 202:
