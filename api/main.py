@@ -45,7 +45,7 @@ DB_PATH = os.path.join(STORAGE_DIR, "metrics.db")
 def startup():
     os.makedirs(INPUTS_DIR, exist_ok=True)
     _init_db()
-    r.delete("queue:heavy", "queue:light", "active:tasks")
+    r.delete("queue:heavy", "queue:light", "queue:delayed", "active:tasks")
     for key in r.keys("worker:*:heartbeat"):
         r.delete(key)
     if r.get("config:queue_mode") is None:
@@ -134,7 +134,18 @@ async def ingest_task(
         task_payload["input_summary"] = f"{task_type} text: {text[:80]}..."
 
     queue_name = f"queue:{R['queue']}"
-    r.lpush(queue_name, json.dumps(task_payload))
+    queue_mode = r.get("config:queue_mode") or "fifo"
+    payload_str = json.dumps(task_payload)
+
+    if queue_mode == "priority":
+        score = PRIORITY_LEVELS.get(priority, 1)
+        r.zadd(queue_name, {payload_str: score})
+    elif queue_mode == "setf":
+        et = TASK_REGISTRY[task_type].get("expected_time", 2.0)
+        r.zadd(queue_name, {payload_str: et})
+    else:
+        r.lpush(queue_name, payload_str)
+
     r.hset("active:tasks", task_id, "PENDING")
 
     return JSONResponse(

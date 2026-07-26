@@ -1,5 +1,5 @@
 """
-Worker node — heterogeneous GPU/CPU inference with Redis task queue. v1.4
+Worker node — heterogeneous GPU/CPU inference with Redis task queue. v1.5
 Registry — supports 4 task types across 5 workers.
 """
 
@@ -34,6 +34,7 @@ WORKER_NAME = os.getenv("WORKER_NAME",
     "worker-fast-gpu" if WORKER_TYPE == "FAST" else f"worker-cpu-{os.getpid()}")
 API_GATEWAY = os.getenv("API_GATEWAY_URL", "http://fastapi-gateway:8000")
 ENABLE_STEALING = os.getenv("ENABLE_WORK_STEALING", "1") == "1"
+SCHED_MODE = os.getenv("SCHEDULING_STRATEGY", "fifo")
 
 # legacy compat
 if WORKER_TYPE == "FAST" and "FAST" in WORKER_NAME and WORKER_NAME.startswith("Worker_"):
@@ -181,6 +182,17 @@ signal.signal(signal.SIGTERM, shutdown)
 signal.signal(signal.SIGINT, shutdown)
 
 
+def _pop_queue(qname: str, zset: bool):
+    if zset:
+        result = r.bzpopmin(qname, timeout=1)
+        if result is None:
+            return None
+        # result is (qname, payload, score) — ignore score
+        return (result[0], result[1])
+    else:
+        return r.blpop(qname, timeout=1)
+
+
 # Task executors
 
 def execute_ic(payload: dict) -> str:
@@ -247,23 +259,28 @@ EXECUTORS = {
 
 # Main loop
 
+SIGNAL = shutdown
+
+# Main loop
+
 heartbeat_counter = 0
-logger.info("%s Main loop started.", WORKER_NAME)
+logger.info("%s Main loop started. sched=%s", WORKER_NAME, SCHED_MODE)
 
 while True:
     task_data = None
     stolen = False
+    zset_mode = SCHED_MODE in ("priority", "setf")
 
     if WORKER_TYPE == "FAST":
-        task_data = r.blpop("queue:heavy", timeout=1)
+        task_data = _pop_queue("queue:heavy", zset_mode)
         if task_data is None:
             stealing_enabled = r.get("config:work_stealing") != "0"
             if stealing_enabled and ENABLE_STEALING:
-                task_data = r.blpop("queue:light", timeout=1)
+                task_data = _pop_queue("queue:light", zset_mode)
                 if task_data:
                     stolen = True
     else:
-        task_data = r.blpop("queue:light", timeout=1)
+        task_data = _pop_queue("queue:light", zset_mode)
 
     if task_data is None:
         heartbeat_counter += 1
