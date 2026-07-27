@@ -27,6 +27,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 from shared.jailbreak_words import JAILBREAK_KEYWORDS
+from shared.task_registry import TASK_REGISTRY
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis-broker")
 WORKER_TYPE = os.getenv("WORKER_TYPE", "SLOW")
@@ -193,6 +194,24 @@ def _pop_queue(qname: str, zset: bool):
         return r.blpop(qname, timeout=1)
 
 
+def _sweep_delayed():
+    now = time.time()
+    items = r.zrangebyscore("queue:delayed", 0, now)
+    if not items:
+        return
+    logger.info("%s Sweeping %d delayed task(s)", WORKER_NAME, len(items))
+    for payload_str in items:
+        try:
+            p = json.loads(payload_str)
+            tt = p["task_type"]
+            q = f"queue:{TASK_REGISTRY[tt]['queue']}"
+            r.lpush(q, payload_str)
+            r.delete(f"config:delay:{p['task_id']}")
+        except Exception as e:
+            logger.warning("%s Delayed sweep error: %s", WORKER_NAME, e)
+    r.zremrangebyscore("queue:delayed", 0, now)
+
+
 # Task executors
 
 def execute_ic(payload: dict) -> str:
@@ -286,6 +305,7 @@ while True:
         heartbeat_counter += 1
         if heartbeat_counter % 5 == 0:
             r.set(f"worker:{WORKER_NAME}:heartbeat", "alive", ex=15)
+            _sweep_delayed()
         continue
 
     r.set(f"worker:{WORKER_NAME}:heartbeat", "alive", ex=15)

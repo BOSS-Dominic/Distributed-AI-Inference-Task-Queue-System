@@ -95,6 +95,7 @@ def inject_workload(total_tasks: int = 30, arrival_rate: float = 20.0,
     ic_submitted = sa_submitted = sim_submitted = sum_submitted = 0
     jailbreak_count = 0
     fail_count = 0
+    delay_count = 0
     sa_counter = sim_counter = sum_counter = 0
 
     t0 = time.time()
@@ -186,8 +187,8 @@ def inject_workload(total_tasks: int = 30, arrival_rate: float = 20.0,
     logger.info("Workload injection complete.")
     logger.info("  Elapsed:        %.2fs", elapsed)
     logger.info("  Submitted:      %d/%d", submitted, total_tasks)
-    logger.info("  IC: %d, SA: %d, SIM: %d, SUM: %d, Jailbreak: %d, Failures: %d",
-                ic_submitted, sa_submitted, sim_submitted, sum_submitted, jailbreak_count, fail_count)
+    logger.info("  IC: %d, SA: %d, SIM: %d, SUM: %d, Jailbreak: %d, Delayed: %d, Failures: %d",
+                ic_submitted, sa_submitted, sim_submitted, sum_submitted, jailbreak_count, delay_count, fail_count)
     logger.info("  Effective rate: %.2f tasks/sec", submitted / elapsed if elapsed > 0 else 0)
     logger.info("=" * 60)
 

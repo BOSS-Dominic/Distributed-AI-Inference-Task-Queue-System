@@ -88,6 +88,7 @@ async def ingest_task(
     text_data: str = Form(None),
     text_data_2: str = Form(None),
     priority: str = Form(DEFAULT_PRIORITY),
+    scheduled_at: str = Form(None),
 ):
     if task_type not in TASK_REGISTRY:
         return JSONResponse(
@@ -134,8 +135,18 @@ async def ingest_task(
         task_payload["input_summary"] = f"{task_type} text: {text[:80]}..."
 
     queue_name = f"queue:{R['queue']}"
-    queue_mode = r.get("config:queue_mode") or "fifo"
+    scheduled_at = r.get(f"config:delay:{task_id}")
     payload_str = json.dumps(task_payload)
+
+    if scheduled_at:
+        r.zadd("queue:delayed", {payload_str: float(scheduled_at)})
+        r.hset("active:tasks", task_id, "PENDING")
+        return JSONResponse(
+            content={"status": "Accepted", "task_id": task_id, "delayed": True},
+            status_code=202,
+        )
+
+    queue_mode = r.get("config:queue_mode") or "fifo"
 
     if queue_mode == "priority":
         score = PRIORITY_LEVELS.get(priority, 1)
@@ -199,6 +210,7 @@ def queue_status():
     return {
         "queue_heavy": r.llen("queue:heavy"),
         "queue_light": r.llen("queue:light"),
+        "queue_delayed": r.zcard("queue:delayed"),
         "active_tasks": r.hlen("active:tasks"),
         "timestamp": time.time(),
     }
