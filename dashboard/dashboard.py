@@ -102,10 +102,11 @@ def get_queue_stats():
         return {
             "queue_heavy": r.llen("queue:heavy"),
             "queue_light": r.llen("queue:light"),
+            "queue_delayed": r.zcard("queue:delayed"),
             "active_tasks": r.hlen("active:tasks"),
         }
     except Exception:
-        return {"queue_heavy": 0, "queue_light": 0, "active_tasks": 0}
+        return {"queue_heavy": 0, "queue_light": 0, "queue_delayed": 0, "active_tasks": 0}
 
 @st.cache_data(ttl=1, show_spinner=False)
 def get_worker_heartbeats():
@@ -136,6 +137,21 @@ def set_work_stealing(enabled: bool):
     try:
         r.set("config:work_stealing", "1" if enabled else "0")
         get_work_stealing_status.clear()
+        return True
+    except Exception:
+        return False
+
+@st.cache_data(ttl=1, show_spinner=False)
+def get_queue_mode():
+    try:
+        return r.get("config:queue_mode") or "fifo"
+    except Exception:
+        return "fifo"
+
+def set_queue_mode(mode: str):
+    try:
+        r.set("config:queue_mode", mode)
+        get_queue_mode.clear()
         return True
     except Exception:
         return False
@@ -339,6 +355,7 @@ def clear_all_caches():
     get_docker_stats.clear()
     get_gpu_utilization.clear()
     get_work_stealing_status.clear()
+    get_queue_mode.clear()
 
 def delete_all_logs():
     try:
@@ -434,11 +451,12 @@ if page == "Overview":
 
         k1, k2, k3, k4 = st.columns(4)
         total_pending = stats["queue_heavy"] + stats["queue_light"]
+        delayed = stats.get("queue_delayed", 0)
         active_workers = sum(1 for v in heartbeats.values() if v)
         total_workers = len(WORKER_TAGS)
 
         with k1:
-            st.metric("Queue Depth", f"{total_pending:,}")
+            st.metric("Queue Depth", f"{total_pending:,}", delta=f"{delayed} delayed" if delayed else None)
         with k2:
             st.metric("Active Workers", f"{active_workers}/{total_workers}")
         with k3:
@@ -1197,6 +1215,39 @@ elif page == "Settings":
 
 
         render_stealing_control()
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    with st.container(border=True):
+        st.subheader("🔀 Scheduling Strategy")
+        current_mode = get_queue_mode()
+        mode_labels = {"fifo": "FIFO (Default)", "priority": "Priority", "setf": "SETF"}
+
+        m1, m2 = st.columns([2, 1])
+        with m1:
+            st.markdown(f"**Queue Mode:** `{current_mode}` — {mode_labels.get(current_mode, current_mode)}")
+        with m2:
+            new_mode = st.selectbox("Switch Mode", ["fifo", "priority", "setf"],
+                                    index=["fifo","priority","setf"].index(current_mode),
+                                    key="queue_mode_select")
+            if st.button("⚡ Apply Queue Mode", use_container_width=True, key="apply_mode"):
+                if set_queue_mode(new_mode):
+                    st.success(f"Queue mode changed to `{new_mode}`. Restart workers for changes to take effect.")
+                else:
+                    st.error("Failed to set queue mode.")
+
+        st.markdown("""
+        | Component | Current Strategy | Description |
+        |-----------|-----------------|-------------|
+        | **Queue Mode** | **%s** | %s |
+        """ % (
+            current_mode.upper(),
+            {
+                "fifo": "First-in-first-out via BLPOP",
+                "priority": "HIGH/MEDIUM/LOW via ZADD+BZPOPMIN",
+                "setf": "Shortest Expected Time First via ZADD+BZPOPMIN",
+            }.get(current_mode, "—"),
+        ))
 
     st.markdown("<br>", unsafe_allow_html=True)
 
