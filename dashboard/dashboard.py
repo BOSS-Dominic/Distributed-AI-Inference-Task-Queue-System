@@ -80,12 +80,12 @@ WORKER_TAGS = {
     "worker-fast-gpu":       {"label": " GPU (Generalist)",  "icon": "⚡", "color": "#a371f7", "gpu": True},
     "worker-slow-cpu-1":     {"label": " CPU Generalist 1",  "icon": "🐌", "color": "#2f81f7", "gpu": False},
     "worker-slow-cpu-2":     {"label": " CPU Generalist 2",  "icon": "🐌", "color": "#3fb950", "gpu": False},
-    "worker-sim-specialist": {"label": " SIM Specialist",    "icon": "", "color": "#2f81f7", "gpu": False},
-    "worker-sum-specialist": {"label": " SUM Specialist",    "icon": "", "color": "#d29922", "gpu": False},
+    "worker-sim-specialist": {"label": " SIM Specialist",    "icon": "🐌", "color": "#2f81f7", "gpu": False},
+    "worker-sum-specialist": {"label": " SUM Specialist",    "icon": "🐌", "color": "#d29922", "gpu": False},
 }
 
 
-# --- Session state ---
+#  Session state 
 if "session_start" not in st.session_state:
     st.session_state.session_start = time.time()
 if "logs_hidden" not in st.session_state:
@@ -99,12 +99,21 @@ if "settings_confirm" not in st.session_state:
 @st.cache_data(ttl=1, show_spinner=False)
 def get_queue_stats():
     try:
-        return {
-            "queue_heavy": r.llen("queue:heavy"),
-            "queue_light": r.llen("queue:light"),
-            "queue_delayed": r.zcard("queue:delayed"),
-            "active_tasks": r.hlen("active:tasks"),
-        }
+        qm = r.get("config:queue_mode") or "fifo"
+        if qm in ("priority", "setf"):
+            return {
+                "queue_heavy": r.zcard("queue:heavy"),
+                "queue_light": r.zcard("queue:light"),
+                "queue_delayed": r.zcard("queue:delayed"),
+                "active_tasks": r.hlen("active:tasks"),
+            }
+        else:
+            return {
+                "queue_heavy": r.llen("queue:heavy"),
+                "queue_light": r.llen("queue:light"),
+                "queue_delayed": r.zcard("queue:delayed"),
+                "active_tasks": r.hlen("active:tasks"),
+            }
     except Exception:
         return {"queue_heavy": 0, "queue_light": 0, "queue_delayed": 0, "active_tasks": 0}
 
@@ -151,6 +160,8 @@ def get_queue_mode():
 def set_queue_mode(mode: str):
     try:
         r.set("config:queue_mode", mode)
+        # flush old queues so new tasks use correct data structure
+        r.delete("queue:heavy", "queue:light")
         get_queue_mode.clear()
         return True
     except Exception:
@@ -471,8 +482,10 @@ if page == "Overview":
         with c1:
             with st.container(border=True):
                 st.markdown("##### Queue Length (Redis)")
+                current_qm = get_queue_mode()
                 heavy_label = f"Heavy ({'/'.join(TASK_REGISTRY[t]['name'][:4] for t in TASK_TYPES if TASK_REGISTRY[t]['queue']=='heavy')})"
                 light_label = f"Light ({'/'.join(TASK_REGISTRY[t]['name'][:4] for t in TASK_TYPES if TASK_REGISTRY[t]['queue']=='light')})"
+                st.caption(f"Queue mode: {current_qm}")
                 fig1 = go.Figure(data=[
                     go.Bar(x=[heavy_label, light_label],
                            y=[stats["queue_heavy"], stats["queue_light"]],
@@ -496,7 +509,7 @@ if page == "Overview":
                 if total > 0:
                     other_failed = max(0, failed - jailbreak)
                     fig2 = go.Figure(data=[go.Pie(
-                        labels=['SUCCESS', 'FAILED (other)', 'JAILBREAK BLOCKED'],
+                        labels=['SUCCESS', 'FAILED', 'JAILBREAK BLOCKED'],
                         values=[success, other_failed, jailbreak],
                         hole=0.4, marker_colors=['#3fb950', '#f85149', '#d29922'],
                         textinfo='label+value', textfont=dict(color='white')
@@ -622,11 +635,11 @@ elif page == "Tasks":
     tab_manual, tab_stress = st.tabs([" Manual Upload", " Stress Simulator"])
 
     with tab_manual:
-        man_tabs = st.tabs([" IC Image", " SA Sentiment", " SIM Similarity", " SUM Summary"])
+        man_tabs = st.tabs([" IC ", " SA ", " SIM ", " SUM "])
 
         with man_tabs[0]:
             with st.container(border=True):
-                st.subheader("🖼️ Image Captioning (IC)")
+                st.subheader("🖼️ Image Captioning")
                 image_files = st.file_uploader(
                     "Select one or more images",
                     type=["jpg", "jpeg", "png", "webp", "bmp"],
@@ -650,7 +663,7 @@ elif page == "Tasks":
 
         with man_tabs[1]:
             with st.container(border=True):
-                st.subheader("💬 Sentiment Analysis (SA)")
+                st.subheader("💬 Sentiment Analysis")
                 sa_text = st.text_area(
                     "Enter prompt(s) - one per line",
                     value="The product arrived on time and works perfectly.\nI am extremely disappointed with the quality.\nThe customer service was very helpful.",
@@ -676,7 +689,7 @@ elif page == "Tasks":
 
         with man_tabs[2]:
             with st.container(border=True):
-                st.subheader("🔗 Semantic Similarity (SIM)")
+                st.subheader("🔗 Semantic Similarity")
                 col_a, col_b = st.columns(2)
                 with col_a:
                     sim_text1 = st.text_area("Sentence A", value="The weather is nice today.", height=80, key="sim_a")
@@ -692,7 +705,7 @@ elif page == "Tasks":
 
         with man_tabs[3]:
             with st.container(border=True):
-                st.subheader("📝 Text Summarization (SUM)")
+                st.subheader("📝 Text Summarization")
                 sum_text = st.text_area(
                     "Enter a paragraph to summarize",
                     value="Artificial intelligence has transformed many industries including healthcare, finance, and education. Machine learning models can now perform tasks that once required human expertise.",
@@ -735,7 +748,7 @@ elif page == "Tasks":
                     st.session_state.stress_sim + st.session_state.stress_sum
                 )
 
-            total = st.slider("Total Tasks", 10, 2000, step=10, key="total_tasks", on_change=on_total_change)
+            total = st.slider("Total Tasks", 0, 2000, step=10, key="total_tasks", on_change=on_total_change)
 
             c1, c2 = st.columns(2)
             with c1:
@@ -754,6 +767,13 @@ elif page == "Tasks":
                 st.caption("Set at least one task type count > 0")
 
             if st.button("🚀 Inject Poisson Workload", type="primary"):
+                # clean orphan PROCESSING keys before injection
+                try:
+                    for task_id in r.hkeys("active:tasks"):
+                        if not r.exists(f"lease:{task_id}"):
+                            r.hdel("active:tasks", task_id)
+                except Exception:
+                    pass
                 with st.spinner(f"Injecting {actual_total} tasks @ λ={arate}..."):
                     stdout, stderr = trigger_workload(actual_total, arate, ic_count, sa_count, sim_count, sum_count)
                 if stdout:
@@ -848,6 +868,15 @@ elif page == "Workers":
                         )
                         st.plotly_chart(fig_w, use_container_width=True, key=f"worker_pie_{wname}_{j}")
                         st.caption(f"Total: {total_w} tasks")
+                        # show current active task for this worker
+                        try:
+                            active = r.hget("active:tasks", wname + "_current")
+                            if active:
+                                st.caption(f"⏳ Working on: {active}")
+                            else:
+                                st.caption(f"💤 Idle")
+                        except Exception:
+                            pass
         else:
             st.info("No task data yet. Worker task distribution will appear here once tasks are processed.")
 
@@ -909,8 +938,10 @@ elif page == "Metrics":
         with ch2:
             with st.container(border=True):
                 st.markdown("##### Avg Latency by Task Type")
-                fig_bar = go.Figure()
-                if lat_by_type:
+                if not lat_by_type:
+                    st.info("No latency data yet.")
+                else:
+                    fig_bar = go.Figure()
                     for ttype in TASK_TYPES:
                         val = lat_by_type.get(ttype, 0)
                         label = f"{val}s" if ttype in lat_by_type else "N/A"
@@ -919,13 +950,14 @@ elif page == "Metrics":
                             marker_color=TASK_COLORS[ttype], width=0.4,
                             text=[label], textposition='outside', textfont=dict(color='gray')))
                 y_max = max(lat_by_type.values()) * 1.5 + 0.5 if lat_by_type else 5
-                fig_bar.update_layout(
-                    margin=dict(l=0, r=0, t=10, b=0), height=350,
-                    paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False,
-                    yaxis=dict(showgrid=True, gridcolor='rgba(128,128,128,0.2)', color='gray', range=[0, y_max]),
-                    xaxis=dict(color='gray')
-                )
-                st.plotly_chart(fig_bar, use_container_width=True, key="metrics_latency_bar")
+                if lat_by_type:
+                    fig_bar.update_layout(
+                        margin=dict(l=0, r=0, t=10, b=0), height=350,
+                        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False,
+                        yaxis=dict(showgrid=True, gridcolor='rgba(128,128,128,0.2)', color='gray', range=[0, y_max]),
+                        xaxis=dict(color='gray')
+                    )
+                    st.plotly_chart(fig_bar, use_container_width=True, key="metrics_latency_bar")
 
         st.markdown("<br>", unsafe_allow_html=True)
         ch3, ch4 = st.columns(2)
@@ -1129,7 +1161,7 @@ elif page == "Alerts":
             alerts.append({
                 "level": "🟠 WARNING",
                 "source": "Metrics & Security",
-                "message": "<br>".join(lines) + f"<br>System is running but has errors - {failed} total failure(s).",
+                "message": "<br>".join(lines) + f" System is running but has errors --- {failed} total failure(s).",
             })
 
         # Queue backlog
@@ -1155,7 +1187,7 @@ elif page == "Alerts":
                     st.markdown(f"**{a['level']}**  |  *{a['source']}*")
                     st.markdown(a['message'])
         else:
-            st.success("### ✅ All Systems Normal\nNo alerts. Workers healthy, resources stable, queues clear.")
+            st.success("### ✅ All Systems Normal")
 
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown("---")
@@ -1232,33 +1264,12 @@ elif page == "Settings":
                                     key="queue_mode_select")
             if st.button("⚡ Apply Queue Mode", use_container_width=True, key="apply_mode"):
                 if set_queue_mode(new_mode):
-                    st.success(f"Queue mode changed to `{new_mode}`. Restart workers for changes to take effect.")
+                    st.success(f"Scheduling changed to `{new_mode}`.")
                 else:
                     st.error("Failed to set queue mode.")
 
-        st.markdown("""
-        | Component | Current Strategy | Description |
-        |-----------|-----------------|-------------|
-        | **Queue Mode** | **%s** | %s |
-        """ % (
-            current_mode.upper(),
-            {
-                "fifo": "First-in-first-out via BLPOP",
-                "priority": "HIGH/MEDIUM/LOW via ZADD+BZPOPMIN",
-                "setf": "Shortest Expected Time First via ZADD+BZPOPMIN",
-            }.get(current_mode, "—"),
-        ))
 
     st.markdown("<br>", unsafe_allow_html=True)
-
-    with st.container(border=True):
-        st.subheader("🔀 Scheduling Strategy")
-        st.markdown("""
-        | Component | Current Strategy | Description |
-        |-----------|-----------------|-------------|
-        | **Queue Discipline** | **FIFO** (BLPOP) | First-in-first-out via Redis blocking pop |
-        """)
-
     st.markdown("<br>", unsafe_allow_html=True)
 
     with st.container(border=True):
@@ -1276,7 +1287,7 @@ elif page == "Settings":
             st.markdown(f"**Workers:** {len(WORKER_TAGS)} (1 GPU Generalist + 2 CPU Generalists + SIM Specialist + SUM Specialist)")
             st.markdown(f"**GPU Device:** RTX 5070 Ti (Passthrough)")
         with s5:
-            st.markdown(f"**CPU Worker Limit:** 1.0 core each")
+            st.markdown(f"**CPU Worker Limit:** 1.0 core each, SUM 2.0 cores")
             st.markdown(f"**Jailbreak Detection:** Keyword pattern matching")
 
     st.markdown("<br>", unsafe_allow_html=True)

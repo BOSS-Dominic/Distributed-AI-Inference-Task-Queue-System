@@ -81,12 +81,13 @@ def inject_workload(total_tasks: int = 30, arrival_rate: float = 20.0,
         sim_count = total_tasks // 4
     if sum_count is None:
         sum_count = total_tasks - ic_count - sa_count - sim_count
-
-    logger.info("=" * 60)
-    logger.info("Poisson Workload Injection")
-    logger.info("Total: %d, Rate: %s/s, IC: %d, SA: %d, SIM: %d, SUM: %d",
-                total_tasks, arrival_rate, ic_count, sa_count, sim_count, sum_count)
-    logger.info("=" * 60)
+    # clamp negatives
+    if sum_count < 0:
+        sum_count = 0
+    actual_total = ic_count + sa_count + sim_count + sum_count
+    if actual_total <= 0:
+        logger.warning("All task counts are zero, nothing to inject.")
+        return
 
     task_sequence = (["IC"] * ic_count) + (["SA"] * sa_count) + (["SIM"] * sim_count) + (["SUM"] * sum_count)
     random.shuffle(task_sequence)

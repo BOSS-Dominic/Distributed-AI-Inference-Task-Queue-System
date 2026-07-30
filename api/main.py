@@ -10,7 +10,7 @@ import time
 import uuid
 
 import redis
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, Form, UploadFile, BackgroundTasks
 from fastapi.responses import JSONResponse
 
 logging.basicConfig(
@@ -146,6 +146,8 @@ async def ingest_task(
             status_code=202,
         )
 
+# Enqueue
+
     queue_mode = r.get("config:queue_mode") or "fifo"
 
     if queue_mode == "priority":
@@ -166,7 +168,7 @@ async def ingest_task(
 
 
 @app.post("/v1/internal/audit")
-async def write_audit_log(data: dict):
+async def write_audit_log(data: dict, background_tasks: BackgroundTasks):
     required_fields = ("task_id", "task_type", "worker_name",
                        "execution_latency", "final_status", "model_output")
     for field in required_fields:
@@ -175,7 +177,11 @@ async def write_audit_log(data: dict):
                 content={"status": "error", "detail": f"Missing field: {field}"},
                 status_code=422,
             )
+    background_tasks.add_task(_write_to_sqlite, data)
+    return {"status": "accepted"}
 
+
+def _write_to_sqlite(data: dict):
     try:
         conn = sqlite3.connect(DB_PATH)
         conn.execute("PRAGMA busy_timeout=5000;")
@@ -196,16 +202,8 @@ async def write_audit_log(data: dict):
         )
         conn.commit()
         conn.close()
-        return {"status": "logged"}
     except Exception as e:
         logger.error("Audit write failed: %s", e)
-        return JSONResponse(
-            content={"status": "error", "detail": str(e)},
-            status_code=500,
-        )
-
-
-@app.get("/v1/queue/status")
 def queue_status():
     return {
         "queue_heavy": r.llen("queue:heavy"),

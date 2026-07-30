@@ -173,7 +173,7 @@ def write_audit(audit_payload: dict):
         logger.error("%s SQLite fallback failed: %s", WORKER_NAME, db_err)
 
 
-# Graceful shutdown
+# shutdown
 
 def shutdown(signum, frame):
     logger.info("%s Received signal %s, shutting down.", WORKER_NAME, signum)
@@ -182,17 +182,28 @@ def shutdown(signum, frame):
 signal.signal(signal.SIGTERM, shutdown)
 signal.signal(signal.SIGINT, shutdown)
 
+# Queue pop with optional zset support
 
 def _pop_queue(qname: str, zset: bool):
-    if zset:
-        result = r.bzpopmin(qname, timeout=1)
+    try:
+        if zset:
+            result = r.bzpopmin(qname, timeout=1)
+            if result is None:
+                return None
+            return (result[0], result[1], result[2])
+        else:
+            result = r.blpop(qname, timeout=1)
+            if result is None:
+                return None
+            return (result[0], result[1], None)
+    except redis.exceptions.ResponseError:
+        result = r.blpop(qname, timeout=1)
         if result is None:
             return None
-        # result is (qname, payload, score) — ignore score
-        return (result[0], result[1])
-    else:
-        return r.blpop(qname, timeout=1)
+        return (result[0], result[1], None)
 
+
+# Delayed queue 
 
 def _sweep_delayed():
     now = time.time()
@@ -280,7 +291,7 @@ EXECUTORS = {
 
 SIGNAL = shutdown
 
-# Main loop
+
 
 heartbeat_counter = 0
 logger.info("%s Main loop started. sched=%s", WORKER_NAME, SCHED_MODE)
@@ -289,10 +300,16 @@ while True:
     task_data = None
     stolen = False
     zset_mode = SCHED_MODE in ("priority", "setf")
+    # check for live queue_mode change from Redis
+    live_mode = r.get("config:queue_mode")
+    if live_mode and live_mode != SCHED_MODE:
+        logger.info("%s queue_mode changed: %s -> %s", WORKER_NAME, SCHED_MODE, live_mode)
+        SCHED_MODE = live_mode
+        zset_mode = SCHED_MODE in ("priority", "setf")
 
     if WORKER_TYPE == "FAST":
         task_data = _pop_queue("queue:heavy", zset_mode)
-        if task_data is None:
+        if task_data is None and SCHED_MODE != "setf":
             stealing_enabled = r.get("config:work_stealing") != "0"
             if stealing_enabled and ENABLE_STEALING:
                 task_data = _pop_queue("queue:light", zset_mode)
@@ -310,7 +327,7 @@ while True:
 
     r.set(f"worker:{WORKER_NAME}:heartbeat", "alive", ex=15)
 
-    queue_name, payload_str = task_data
+    queue_name, payload_str, zscore = task_data
     try:
         payload = json.loads(payload_str)
     except json.JSONDecodeError:
@@ -323,13 +340,18 @@ while True:
     # recycle tasks this worker cannot handle (specialist mismatch)
     if task_type not in VALID_TYPES:
         logger.info("%s Cannot handle %s, recycling to %s.", WORKER_NAME, task_type, queue_name)
-        r.rpush(queue_name, payload_str)
+        if zscore is not None:
+            r.zadd(queue_name, {payload_str: zscore})
+        else:
+            r.rpush(queue_name, payload_str)
         continue
 
     stolen_tag = " (stolen)" if stolen else ""
     logger.info("%s Processing %s task %s%s", WORKER_NAME, task_type, task_id, stolen_tag)
 
     r.hset("active:tasks", task_id, "PROCESSING")
+    r.hset("active:tasks", f"{WORKER_NAME}_current", f"{task_id} ({task_type})")
+    r.setex(f"lease:{task_id}", 200, WORKER_NAME)
     start_time = time.time()
     model_output, final_status = "", "SUCCESS"
 
@@ -354,6 +376,8 @@ while True:
     latency = time.time() - start_time
 
     r.hdel("active:tasks", task_id)
+    r.hdel("active:tasks", f"{WORKER_NAME}_current")
+    r.delete(f"lease:{task_id}")
 
     audit_payload = {
         "task_id": task_id, "task_type": task_type,
