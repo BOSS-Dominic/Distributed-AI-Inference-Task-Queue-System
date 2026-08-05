@@ -41,6 +41,17 @@ TASK_FAILURE_RATE = float(os.getenv("TASK_FAILURE_RATE", "0"))
 MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
 RETRY_BASE_DELAY = float(os.getenv("RETRY_BASE_DELAY", "2.0"))
 
+
+def _fault_config():
+    """Live fault config from Redis (Dashboard sliders), falling back to env."""
+    try:
+        rate = float(r.get("config:task_failure_rate") or TASK_FAILURE_RATE)
+        retries = int(r.get("config:max_retries") or MAX_RETRIES)
+        delay = float(r.get("config:retry_base_delay") or RETRY_BASE_DELAY)
+        return rate, retries, delay
+    except Exception:
+        return TASK_FAILURE_RATE, MAX_RETRIES, RETRY_BASE_DELAY
+
 # legacy compat
 if WORKER_TYPE == "FAST" and "FAST" in WORKER_NAME and WORKER_NAME.startswith("Worker_"):
     WORKER_NAME = "worker-fast-gpu"
@@ -354,7 +365,9 @@ while True:
         if heartbeat_counter % 5 == 0:
             r.set(f"worker:{WORKER_NAME}:heartbeat", "alive", ex=15)
             _sweep_delayed()
-            _replay_dead()
+            if r.get("config:replay_dead"):
+                _replay_dead()
+                r.delete("config:replay_dead")   # one replay per click
         continue
 
     r.set(f"worker:{WORKER_NAME}:heartbeat", "alive", ex=15)
@@ -389,8 +402,10 @@ while True:
     retry_count = payload.get("retry_count", 0)
     injected_failure = False
 
+    fail_rate, max_retries, base_delay = _fault_config()
+
     # fault injection: simulate transient failure before inference
-    if TASK_FAILURE_RATE > 0 and random.random() < TASK_FAILURE_RATE:
+    if fail_rate > 0 and random.random() < fail_rate:
         injected_failure = True
 
     try:
@@ -409,21 +424,21 @@ while True:
         if "JailbreakBlocked" in err_msg:
             final_status = "FAILED"
             model_output = err_msg
-        elif retry_count < MAX_RETRIES:
+        elif retry_count < max_retries:
             # transient failure -> exponential backoff into delayed queue
             payload["retry_count"] = retry_count + 1
-            delay = RETRY_BASE_DELAY * (2 ** (payload["retry_count"] - 1)) + random.uniform(0, 1)
+            delay = base_delay * (2 ** (payload["retry_count"] - 1)) + random.uniform(0, 1)
             r.zadd("queue:delayed", {json.dumps(payload): time.time() + delay})
             r.hdel("active:tasks", task_id)
             r.hdel("active:tasks", f"{WORKER_NAME}_current")
             r.delete(f"lease:{task_id}")
             logger.info("%s Retrying task %s in %.1fs (attempt %d/%d)",
-                        WORKER_NAME, task_id, delay, payload["retry_count"], MAX_RETRIES)
+                        WORKER_NAME, task_id, delay, payload["retry_count"], max_retries)
             continue
         else:
             # max retries exhausted -> dead letter queue
             final_status = "FAILED"
-            model_output = f"ExhaustedRetries: task failed after {MAX_RETRIES} retries"
+            model_output = f"ExhaustedRetries: task failed after {max_retries} retries"
             r.lpush("queue:dead", json.dumps(payload))
             logger.info("%s Task %s -> dead letter queue (exhausted retries)", WORKER_NAME, task_id)
 

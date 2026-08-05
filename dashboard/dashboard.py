@@ -3,6 +3,7 @@ Streamlit dashboard — real-time monitoring and control for the task queue syst
 """
 
 import os
+import json
 import sqlite3
 import subprocess
 import time
@@ -105,6 +106,7 @@ def get_queue_stats():
                 "queue_heavy": r.zcard("queue:heavy"),
                 "queue_light": r.zcard("queue:light"),
                 "queue_delayed": r.zcard("queue:delayed"),
+                "queue_dead": r.llen("queue:dead"),
                 "active_tasks": r.hlen("active:tasks"),
             }
         else:
@@ -112,10 +114,11 @@ def get_queue_stats():
                 "queue_heavy": r.llen("queue:heavy"),
                 "queue_light": r.llen("queue:light"),
                 "queue_delayed": r.zcard("queue:delayed"),
+                "queue_dead": r.llen("queue:dead"),
                 "active_tasks": r.hlen("active:tasks"),
             }
     except Exception:
-        return {"queue_heavy": 0, "queue_light": 0, "queue_delayed": 0, "active_tasks": 0}
+        return {"queue_heavy": 0, "queue_light": 0, "queue_delayed": 0, "queue_dead": 0, "active_tasks": 0}
 
 @st.cache_data(ttl=1, show_spinner=False)
 def get_worker_heartbeats():
@@ -163,6 +166,64 @@ def set_queue_mode(mode: str):
         # flush old queues so new tasks use correct data structure
         r.delete("queue:heavy", "queue:light")
         get_queue_mode.clear()
+        return True
+    except Exception:
+        return False
+
+# --- Fault injection config (Phase 3) ---
+
+@st.cache_data(ttl=1, show_spinner=False)
+def get_fault_config():
+    try:
+        return {
+            "failure_rate": float(r.get("config:task_failure_rate") or 0),
+            "max_retries": int(r.get("config:max_retries") or 3),
+            "base_delay": float(r.get("config:retry_base_delay") or 2.0),
+        }
+    except Exception:
+        return {"failure_rate": 0, "max_retries": 3, "base_delay": 2.0}
+
+def set_fault_config(rate, retries, delay):
+    try:
+        r.set("config:task_failure_rate", str(rate))
+        r.set("config:max_retries", str(retries))
+        r.set("config:retry_base_delay", str(delay))
+        get_fault_config.clear()
+        return True
+    except Exception:
+        return False
+
+@st.cache_data(ttl=2, show_spinner=False)
+def get_dead_letter_tasks():
+    try:
+        items = r.lrange("queue:dead", 0, -1)
+        rows = []
+        for i, s in enumerate(items, 1):
+            try:
+                p = json.loads(s)
+                rows.append({
+                    "task_id": p.get("task_id", "?"),
+                    "task_type": p.get("task_type", "?"),
+                    "retry_count": p.get("retry_count", 0),
+                    "input_summary": (p.get("input_summary") or "")[:60],
+                })
+            except Exception:
+                rows.append({"task_id": "?", "task_type": "?", "retry_count": "?", "input_summary": str(s)[:60]})
+        return pd.DataFrame(rows)
+    except Exception:
+        return pd.DataFrame()
+
+def replay_dead():
+    try:
+        # ask a worker to replay one dead task (worker polls queue:dead via _replay_dead)
+        r.set("config:replay_dead", "1", ex=30)
+        return True
+    except Exception:
+        return False
+
+def purge_dead():
+    try:
+        r.delete("queue:dead")
         return True
     except Exception:
         return False
@@ -1220,6 +1281,7 @@ elif page == "Alerts":
 elif page == "Settings":
     st.title("⚙️ Settings & Configuration")
     st.markdown("<hr style='border-color: #30363d;'>", unsafe_allow_html=True)
+    stats = get_queue_stats()
 
     with st.container(border=True):
         st.subheader("🔀 Work-Stealing Control")
@@ -1270,6 +1332,52 @@ elif page == "Settings":
 
 
     st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    with st.container(border=True):
+        st.subheader("💥 Fault Injection & Retry")
+        fc = get_fault_config()
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            failure_rate = st.slider("Failure Rate (%)", 0, 50, int(fc["failure_rate"] * 100),
+                                     step=5, key="fault_rate")
+        with c2:
+            max_retries = st.slider("Max Retries", 0, 5, fc["max_retries"], key="max_retries")
+        with c3:
+            base_delay = st.slider("Base Delay (s)", 1, 10, int(fc["base_delay"]), key="base_delay")
+
+        st.caption("Fault injection simulates transient failures (Chaos Engineering). "
+                   "Retried tasks use exponential backoff into the delayed queue.")
+        if st.button("⚙️ Apply Fault Config", use_container_width=True, key="apply_fault"):
+            if set_fault_config(failure_rate / 100.0, max_retries, base_delay):
+                st.success(f"Fault config applied: rate={failure_rate}%, retries={max_retries}, delay={base_delay}s")
+            else:
+                st.error("Failed to set fault config.")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    with st.container(border=True):
+        st.subheader("🗄️ Dead Letter Queue")
+        dead_df = get_dead_letter_tasks()
+        st.metric("Dead Letter Queue", f"{len(dead_df)} task(s)")
+        if not dead_df.empty:
+            st.dataframe(dead_df, use_container_width=True, height=200)
+            b1, b2 = st.columns(2)
+            with b1:
+                if st.button("🔁 Replay One Task", use_container_width=True, key="replay_dead"):
+                    if replay_dead():
+                        st.success("Replay requested — worker will re-enqueue one dead task.")
+                    else:
+                        st.error("Failed to request replay.")
+            with b2:
+                if st.button("🗑️ Purge DLQ", type="secondary", use_container_width=True, key="purge_dead"):
+                    if purge_dead():
+                        st.success("Dead letter queue purged.")
+                    else:
+                        st.error("Failed to purge.")
+        else:
+            st.info("Dead letter queue is empty.")
+
     st.markdown("<br>", unsafe_allow_html=True)
 
     with st.container(border=True):

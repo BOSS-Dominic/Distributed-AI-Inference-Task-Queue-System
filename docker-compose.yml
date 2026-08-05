@@ -44,6 +44,9 @@ services:
       - WORKER_NAME=worker-fast-gpu
       - REDIS_HOST=redis-broker
       - API_GATEWAY_URL=http://fastapi-gateway:8000
+      - TASK_FAILURE_RATE=0
+      - MAX_RETRIES=3
+      - RETRY_BASE_DELAY=2.0
     volumes:
       - ./storage:/app/storage          # sole mount
     deploy:
@@ -71,6 +74,9 @@ services:
       - WORKER_NAME=worker-slow-cpu-1
       - REDIS_HOST=redis-broker
       - API_GATEWAY_URL=http://fastapi-gateway:8000
+      - TASK_FAILURE_RATE=0
+      - MAX_RETRIES=3
+      - RETRY_BASE_DELAY=2.0
     volumes:
       - ./storage:/app/storage
     deploy:
@@ -95,6 +101,9 @@ services:
       - WORKER_NAME=worker-slow-cpu-2
       - REDIS_HOST=redis-broker
       - API_GATEWAY_URL=http://fastapi-gateway:8000
+      - TASK_FAILURE_RATE=0
+      - MAX_RETRIES=3
+      - RETRY_BASE_DELAY=2.0
     volumes:
       - ./storage:/app/storage
     deploy:
@@ -119,6 +128,9 @@ services:
       - WORKER_NAME=worker-sim-specialist
       - REDIS_HOST=redis-broker
       - API_GATEWAY_URL=http://fastapi-gateway:8000
+      - TASK_FAILURE_RATE=0
+      - MAX_RETRIES=3
+      - RETRY_BASE_DELAY=2.0
     volumes:
       - ./storage:/app/storage
     deploy:
@@ -143,6 +155,9 @@ services:
       - WORKER_NAME=worker-sum-specialist
       - REDIS_HOST=redis-broker
       - API_GATEWAY_URL=http://fastapi-gateway:8000
+      - TASK_FAILURE_RATE=0
+      - MAX_RETRIES=3
+      - RETRY_BASE_DELAY=2.0
     volumes:
       - ./storage:/app/storage
     deploy:
