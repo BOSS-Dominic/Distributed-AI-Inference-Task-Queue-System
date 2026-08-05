@@ -6,6 +6,7 @@ Registry — supports 4 task types across 5 workers.
 import json
 import logging
 import os
+import random
 import signal
 import sqlite3
 import sys
@@ -36,6 +37,9 @@ WORKER_NAME = os.getenv("WORKER_NAME",
 API_GATEWAY = os.getenv("API_GATEWAY_URL", "http://fastapi-gateway:8000")
 ENABLE_STEALING = os.getenv("ENABLE_WORK_STEALING", "1") == "1"
 SCHED_MODE = os.getenv("SCHEDULING_STRATEGY", "fifo")
+TASK_FAILURE_RATE = float(os.getenv("TASK_FAILURE_RATE", "0"))
+MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
+RETRY_BASE_DELAY = float(os.getenv("RETRY_BASE_DELAY", "2.0"))
 
 # legacy compat
 if WORKER_TYPE == "FAST" and "FAST" in WORKER_NAME and WORKER_NAME.startswith("Worker_"):
@@ -203,7 +207,19 @@ def _pop_queue(qname: str, zset: bool):
         return (result[0], result[1], None)
 
 
-# Delayed queue 
+# Delayed queue
+
+def _enqueue(tt: str, payload_str: str):
+    """Route a task back to its heavy/light queue using current queue_mode."""
+    q = f"queue:{TASK_REGISTRY[tt]['queue']}"
+    qm = r.get("config:queue_mode") or "fifo"
+    if qm in ("priority", "setf"):
+        score = TASK_REGISTRY[tt].get("expected_time", 2.0)
+        r.zadd(q, {payload_str: score})
+    else:
+        r.lpush(q, payload_str)
+    return q
+
 
 def _sweep_delayed():
     now = time.time()
@@ -215,12 +231,27 @@ def _sweep_delayed():
         try:
             p = json.loads(payload_str)
             tt = p["task_type"]
-            q = f"queue:{TASK_REGISTRY[tt]['queue']}"
-            r.lpush(q, payload_str)
+            _enqueue(tt, payload_str)
             r.delete(f"config:delay:{p['task_id']}")
         except Exception as e:
             logger.warning("%s Delayed sweep error: %s", WORKER_NAME, e)
     r.zremrangebyscore("queue:delayed", 0, now)
+
+
+def _replay_dead():
+    """Replay oldest dead-letter task back to its queue, fresh (retry_count cleared)."""
+    payload_str = r.rpop("queue:dead")
+    if not payload_str:
+        return
+    try:
+        p = json.loads(payload_str)
+        p.pop("retry_count", None)   # replay = fresh submission
+        refreshed = json.dumps(p)
+        _enqueue(p["task_type"], refreshed)
+        logger.info("%s Replayed dead task %s", WORKER_NAME, p.get("task_id", "?"))
+    except Exception as e:
+        logger.warning("%s Replay error, returning to dead: %s", WORKER_NAME, e)
+        r.rpush("queue:dead", payload_str)
 
 
 # Task executors
@@ -323,6 +354,7 @@ while True:
         if heartbeat_counter % 5 == 0:
             r.set(f"worker:{WORKER_NAME}:heartbeat", "alive", ex=15)
             _sweep_delayed()
+            _replay_dead()
         continue
 
     r.set(f"worker:{WORKER_NAME}:heartbeat", "alive", ex=15)
@@ -354,8 +386,16 @@ while True:
     r.setex(f"lease:{task_id}", 200, WORKER_NAME)
     start_time = time.time()
     model_output, final_status = "", "SUCCESS"
+    retry_count = payload.get("retry_count", 0)
+    injected_failure = False
+
+    # fault injection: simulate transient failure before inference
+    if TASK_FAILURE_RATE > 0 and random.random() < TASK_FAILURE_RATE:
+        injected_failure = True
 
     try:
+        if injected_failure:
+            raise RuntimeError(f"InjectedFailure: simulated transient error (attempt {retry_count + 1})")
         executor = EXECUTORS.get(task_type)
         if executor is None:
             model_output = f"Unknown task_type: {task_type}"
@@ -365,13 +405,27 @@ while True:
 
     except Exception as e:
         err_msg = str(e)
-        final_status = "FAILED"
+        # jailbreak is not a fault, no retry
         if "JailbreakBlocked" in err_msg:
+            final_status = "FAILED"
             model_output = err_msg
+        elif retry_count < MAX_RETRIES:
+            # transient failure -> exponential backoff into delayed queue
+            payload["retry_count"] = retry_count + 1
+            delay = RETRY_BASE_DELAY * (2 ** (payload["retry_count"] - 1)) + random.uniform(0, 1)
+            r.zadd("queue:delayed", {json.dumps(payload): time.time() + delay})
+            r.hdel("active:tasks", task_id)
+            r.hdel("active:tasks", f"{WORKER_NAME}_current")
+            r.delete(f"lease:{task_id}")
+            logger.info("%s Retrying task %s in %.1fs (attempt %d/%d)",
+                        WORKER_NAME, task_id, delay, payload["retry_count"], MAX_RETRIES)
+            continue
         else:
-            model_output = f"{type(e).__name__}: {err_msg}"
-        logger.error("%s Task %s failed: %s", WORKER_NAME, task_id, model_output)
-        traceback.print_exc()
+            # max retries exhausted -> dead letter queue
+            final_status = "FAILED"
+            model_output = f"ExhaustedRetries: task failed after {MAX_RETRIES} retries"
+            r.lpush("queue:dead", json.dumps(payload))
+            logger.info("%s Task %s -> dead letter queue (exhausted retries)", WORKER_NAME, task_id)
 
     latency = time.time() - start_time
 
