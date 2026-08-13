@@ -146,11 +146,18 @@ async def ingest_task(
         task_payload["input_summary"] = f"{task_type} text: {text[:80]}..."
 
     queue_name = f"queue:{R['queue']}"
-    scheduled_at = r.get(f"config:delay:{task_id}")
     payload_str = json.dumps(task_payload)
 
+    # client-scheduled task: delay via queue:delayed (seconds offset)
     if scheduled_at:
-        r.zadd("queue:delayed", {payload_str: float(scheduled_at)})
+        try:
+            delay_s = float(scheduled_at)
+        except ValueError:
+            return JSONResponse(
+                content={"status": "error", "detail": "scheduled_at must be a number of seconds from now"},
+                status_code=400,
+            )
+        r.zadd("queue:delayed", {payload_str: time.time() + delay_s})
         r.hset("active:tasks", task_id, "PENDING")
         return JSONResponse(
             content={"status": "Accepted", "task_id": task_id, "delayed": True},
@@ -222,9 +229,16 @@ def _write_to_sqlite(data: dict):
 
 @app.get("/v1/queue/status")
 def queue_status():
+    qm = r.get("config:queue_mode") or "fifo"
+    if qm in ("priority", "setf"):
+        heavy = r.zcard("queue:heavy")
+        light = r.zcard("queue:light")
+    else:
+        heavy = r.llen("queue:heavy")
+        light = r.llen("queue:light")
     return {
-        "queue_heavy": r.llen("queue:heavy"),
-        "queue_light": r.llen("queue:light"),
+        "queue_heavy": heavy,
+        "queue_light": light,
         "queue_delayed": r.zcard("queue:delayed"),
         "active_tasks": r.hlen("active:tasks"),
         "timestamp": time.time(),
