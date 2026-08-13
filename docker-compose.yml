@@ -47,6 +47,7 @@ services:
       - TASK_FAILURE_RATE=0
       - MAX_RETRIES=3
       - RETRY_BASE_DELAY=2.0
+      - RETRY_MODE=backoff_jitter
     volumes:
       - ./storage:/app/storage          # sole mount
     deploy:
@@ -77,6 +78,7 @@ services:
       - TASK_FAILURE_RATE=0
       - MAX_RETRIES=3
       - RETRY_BASE_DELAY=2.0
+      - RETRY_MODE=backoff_jitter
     volumes:
       - ./storage:/app/storage
     deploy:
@@ -104,6 +106,7 @@ services:
       - TASK_FAILURE_RATE=0
       - MAX_RETRIES=3
       - RETRY_BASE_DELAY=2.0
+      - RETRY_MODE=backoff_jitter
     volumes:
       - ./storage:/app/storage
     deploy:
@@ -131,6 +134,7 @@ services:
       - TASK_FAILURE_RATE=0
       - MAX_RETRIES=3
       - RETRY_BASE_DELAY=2.0
+      - RETRY_MODE=backoff_jitter
     volumes:
       - ./storage:/app/storage
     deploy:
@@ -158,6 +162,7 @@ services:
       - TASK_FAILURE_RATE=0
       - MAX_RETRIES=3
       - RETRY_BASE_DELAY=2.0
+      - RETRY_MODE=backoff_jitter
     volumes:
       - ./storage:/app/storage
     deploy:

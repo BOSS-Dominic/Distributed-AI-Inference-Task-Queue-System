@@ -28,7 +28,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 from shared.jailbreak_words import JAILBREAK_KEYWORDS
-from shared.task_registry import TASK_REGISTRY
+from shared.task_registry import TASK_REGISTRY, PRIORITY_LEVELS
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis-broker")
 WORKER_TYPE = os.getenv("WORKER_TYPE", "SLOW")
@@ -40,6 +40,7 @@ SCHED_MODE = os.getenv("SCHEDULING_STRATEGY", "fifo")
 TASK_FAILURE_RATE = float(os.getenv("TASK_FAILURE_RATE", "0"))
 MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
 RETRY_BASE_DELAY = float(os.getenv("RETRY_BASE_DELAY", "2.0"))
+RETRY_MODE = os.getenv("RETRY_MODE", "backoff_jitter")  # none / immediate / backoff / backoff_jitter
 
 
 def _fault_config():
@@ -48,9 +49,21 @@ def _fault_config():
         rate = float(r.get("config:task_failure_rate") or TASK_FAILURE_RATE)
         retries = int(r.get("config:max_retries") or MAX_RETRIES)
         delay = float(r.get("config:retry_base_delay") or RETRY_BASE_DELAY)
-        return rate, retries, delay
+        mode = r.get("config:retry_mode") or RETRY_MODE
+        return rate, retries, delay, mode
     except Exception:
-        return TASK_FAILURE_RATE, MAX_RETRIES, RETRY_BASE_DELAY
+        return TASK_FAILURE_RATE, MAX_RETRIES, RETRY_BASE_DELAY, RETRY_MODE
+
+
+def _retry_delay(mode: str, attempt: int, base: float) -> float:
+    """Compute retry delay per mode. attempt is 1-based."""
+    if mode == "immediate":
+        return 0.0
+    exp = base * (2 ** (attempt - 1))
+    if mode == "backoff":
+        return exp
+    # backoff_jitter (default) and backoff+jitter
+    return exp + random.uniform(0, 1)
 
 # legacy compat
 if WORKER_TYPE == "FAST" and "FAST" in WORKER_NAME and WORKER_NAME.startswith("Worker_"):
@@ -173,11 +186,13 @@ def write_audit(audit_payload: dict):
         conn.execute(
             """INSERT OR REPLACE INTO task_history
                (task_id, task_type, worker_name, execution_latency,
-                final_status, model_output, input_summary)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                total_latency, waiting_time, retry_count, final_status, model_output, input_summary)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 audit_payload["task_id"], audit_payload["task_type"],
                 audit_payload["worker_name"], audit_payload["execution_latency"],
+                audit_payload.get("total_latency"), audit_payload.get("waiting_time"),
+                audit_payload.get("retry_count", 0),
                 audit_payload["final_status"], audit_payload["model_output"],
                 audit_payload.get("input_summary", ""),
             ),
@@ -225,7 +240,14 @@ def _enqueue(tt: str, payload_str: str):
     q = f"queue:{TASK_REGISTRY[tt]['queue']}"
     qm = r.get("config:queue_mode") or "fifo"
     if qm in ("priority", "setf"):
-        score = TASK_REGISTRY[tt].get("expected_time", 2.0)
+        try:
+            p = json.loads(payload_str)
+        except Exception:
+            p = {}
+        if qm == "priority":
+            score = PRIORITY_LEVELS.get(p.get("priority", "MEDIUM"), 1)
+        else:  # setf
+            score = TASK_REGISTRY[tt].get("expected_time", 2.0)
         r.zadd(q, {payload_str: score})
     else:
         r.lpush(q, payload_str)
@@ -250,13 +272,14 @@ def _sweep_delayed():
 
 
 def _replay_dead():
-    """Replay oldest dead-letter task back to its queue, fresh (retry_count cleared)."""
+    """Replay oldest dead-letter task back to its queue, fresh (retry_count/first_attempt cleared)."""
     payload_str = r.rpop("queue:dead")
     if not payload_str:
         return
     try:
         p = json.loads(payload_str)
-        p.pop("retry_count", None)   # replay = fresh submission
+        p.pop("retry_count", None)           # replay = fresh submission
+        p.pop("first_attempt_time", None)    # end-to-end latency resets too
         refreshed = json.dumps(p)
         _enqueue(p["task_type"], refreshed)
         logger.info("%s Replayed dead task %s", WORKER_NAME, p.get("task_id", "?"))
@@ -402,7 +425,11 @@ while True:
     retry_count = payload.get("retry_count", 0)
     injected_failure = False
 
-    fail_rate, max_retries, base_delay = _fault_config()
+    fail_rate, max_retries, base_delay, retry_mode = _fault_config()
+
+    # record first attempt time for end-to-end latency measurement
+    if "first_attempt_time" not in payload:
+        payload["first_attempt_time"] = time.time()
 
     # fault injection: simulate transient failure before inference
     if fail_rate > 0 and random.random() < fail_rate:
@@ -424,25 +451,27 @@ while True:
         if "JailbreakBlocked" in err_msg:
             final_status = "FAILED"
             model_output = err_msg
-        elif retry_count < max_retries:
-            # transient failure -> exponential backoff into delayed queue
+        elif retry_mode == "none" or retry_count >= max_retries:
+            # no-retry mode, or retries exhausted -> dead letter queue
+            final_status = "FAILED"
+            model_output = f"ExhaustedRetries: task failed after {retry_count} retries"
+            r.lpush("queue:dead", json.dumps(payload))
+            logger.info("%s Task %s -> dead letter queue (exhausted retries)", WORKER_NAME, task_id)
+        else:
+            # transient failure -> backoff (per mode) into delayed queue
             payload["retry_count"] = retry_count + 1
-            delay = base_delay * (2 ** (payload["retry_count"] - 1)) + random.uniform(0, 1)
+            delay = _retry_delay(retry_mode, payload["retry_count"], base_delay)
             r.zadd("queue:delayed", {json.dumps(payload): time.time() + delay})
             r.hdel("active:tasks", task_id)
             r.hdel("active:tasks", f"{WORKER_NAME}_current")
             r.delete(f"lease:{task_id}")
-            logger.info("%s Retrying task %s in %.1fs (attempt %d/%d)",
-                        WORKER_NAME, task_id, delay, payload["retry_count"], max_retries)
+            logger.info("%s Retrying task %s in %.1fs (attempt %d/%d, mode=%s)",
+                        WORKER_NAME, task_id, delay, payload["retry_count"], max_retries, retry_mode)
             continue
-        else:
-            # max retries exhausted -> dead letter queue
-            final_status = "FAILED"
-            model_output = f"ExhaustedRetries: task failed after {max_retries} retries"
-            r.lpush("queue:dead", json.dumps(payload))
-            logger.info("%s Task %s -> dead letter queue (exhausted retries)", WORKER_NAME, task_id)
 
     latency = time.time() - start_time
+    total_latency = time.time() - payload.get("first_attempt_time", start_time)
+    waiting_time = start_time - payload.get("created_at", start_time)
 
     r.hdel("active:tasks", task_id)
     r.hdel("active:tasks", f"{WORKER_NAME}_current")
@@ -452,6 +481,9 @@ while True:
         "task_id": task_id, "task_type": task_type,
         "worker_name": WORKER_NAME,
         "execution_latency": round(latency, 6),
+        "total_latency": round(total_latency, 6),
+        "waiting_time": round(max(0.0, waiting_time), 6),
+        "retry_count": payload.get("retry_count", 0),
         "final_status": final_status, "model_output": model_output,
         "input_summary": payload.get("input_summary", ""),
     }

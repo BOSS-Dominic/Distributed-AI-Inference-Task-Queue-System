@@ -103,6 +103,7 @@ def inject_workload(total_tasks: int = 30, arrival_rate: float = 20.0,
 
     for i, task_type in enumerate(task_sequence):
         R = TASK_REGISTRY[task_type]
+        prio = random.choices(PRIORITY_KEYS, weights=DEFAULT_PRIORITY_MIX, k=1)[0]
 
         try:
             if R["requires_file"] and _seed_images:
@@ -114,7 +115,7 @@ def inject_workload(total_tasks: int = 30, arrival_rate: float = 20.0,
                 }
                 resp = requests.post(
                     f"{API_GATEWAY}/v1/inference/tasks",
-                    data={"task_type": task_type},
+                    data={"task_type": task_type, "priority": prio},
                     files=files,
                     timeout=10,
                 )
@@ -133,7 +134,6 @@ def inject_workload(total_tasks: int = 30, arrival_rate: float = 20.0,
                 else:
                     text1 = random.choice(_seed_prompts)
                     text2 = random.choice(_seed_prompts)
-                prio = random.choices(PRIORITY_KEYS, weights=DEFAULT_PRIORITY_MIX, k=1)[0]
                 resp = requests.post(
                     f"{API_GATEWAY}/v1/inference/tasks",
                     data={"task_type": task_type, "text_data": text1, "text_data_2": text2, "priority": prio},
@@ -159,7 +159,6 @@ def inject_workload(total_tasks: int = 30, arrival_rate: float = 20.0,
                 else:
                     text = random.choice(_seed_prompts)
 
-                prio = random.choices(PRIORITY_KEYS, weights=DEFAULT_PRIORITY_MIX, k=1)[0]
                 resp = requests.post(
                     f"{API_GATEWAY}/v1/inference/tasks",
                     data={"task_type": task_type, "text_data": text, "priority": prio},

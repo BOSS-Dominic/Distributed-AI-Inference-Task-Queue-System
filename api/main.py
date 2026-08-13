@@ -63,6 +63,9 @@ def _init_db():
             task_type      TEXT NOT NULL,
             worker_name    TEXT,
             execution_latency REAL,
+            total_latency  REAL,
+            waiting_time   REAL,
+            retry_count    INTEGER DEFAULT 0,
             final_status   TEXT NOT NULL,
             model_output   TEXT,
             input_summary  TEXT,
@@ -77,6 +80,14 @@ def _init_db():
         CREATE INDEX IF NOT EXISTS idx_task_history_status
         ON task_history(final_status)
     """)
+    # migration: add columns if this DB predates v1.6 (retry tracking)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(task_history)")}
+    if "retry_count" not in cols:
+        conn.execute("ALTER TABLE task_history ADD COLUMN retry_count INTEGER DEFAULT 0")
+    if "total_latency" not in cols:
+        conn.execute("ALTER TABLE task_history ADD COLUMN total_latency REAL")
+    if "waiting_time" not in cols:
+        conn.execute("ALTER TABLE task_history ADD COLUMN waiting_time REAL")
     conn.commit()
     conn.close()
 
@@ -188,13 +199,16 @@ def _write_to_sqlite(data: dict):
         conn.execute(
             """INSERT OR REPLACE INTO task_history
                (task_id, task_type, worker_name, execution_latency,
-                final_status, model_output, input_summary)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                total_latency, waiting_time, retry_count, final_status, model_output, input_summary)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 data["task_id"],
                 data["task_type"],
                 data["worker_name"],
                 data["execution_latency"],
+                data.get("total_latency"),
+                data.get("waiting_time"),
+                data.get("retry_count", 0),
                 data["final_status"],
                 data["model_output"],
                 data.get("input_summary", ""),
@@ -204,6 +218,9 @@ def _write_to_sqlite(data: dict):
         conn.close()
     except Exception as e:
         logger.error("Audit write failed: %s", e)
+
+
+@app.get("/v1/queue/status")
 def queue_status():
     return {
         "queue_heavy": r.llen("queue:heavy"),

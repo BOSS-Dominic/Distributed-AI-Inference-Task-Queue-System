@@ -179,15 +179,17 @@ def get_fault_config():
             "failure_rate": float(r.get("config:task_failure_rate") or 0),
             "max_retries": int(r.get("config:max_retries") or 3),
             "base_delay": float(r.get("config:retry_base_delay") or 2.0),
+            "retry_mode": r.get("config:retry_mode") or "backoff_jitter",
         }
     except Exception:
-        return {"failure_rate": 0, "max_retries": 3, "base_delay": 2.0}
+        return {"failure_rate": 0, "max_retries": 3, "base_delay": 2.0, "retry_mode": "backoff_jitter"}
 
-def set_fault_config(rate, retries, delay):
+def set_fault_config(rate, retries, delay, mode):
     try:
         r.set("config:task_failure_rate", str(rate))
         r.set("config:max_retries", str(retries))
         r.set("config:retry_base_delay", str(delay))
+        r.set("config:retry_mode", mode)
         get_fault_config.clear()
         return True
     except Exception:
@@ -323,13 +325,27 @@ def get_sqlite_history(limit=None):
     try:
         uri = f"file:{DB_PATH}?mode=ro"
         conn = sqlite3.connect(uri, uri=True)
-        query = "SELECT task_id, task_type, worker_name, execution_latency, final_status, model_output, input_summary, timestamp FROM task_history ORDER BY timestamp DESC"
+        query = "SELECT task_id, task_type, worker_name, execution_latency, total_latency, waiting_time, retry_count, final_status, model_output, input_summary, timestamp FROM task_history ORDER BY timestamp DESC"
         if limit:
             query += f" LIMIT {limit}"
         df = pd.read_sql_query(query, conn)
         conn.close()
         if not df.empty:
             df.index = range(1, len(df) + 1)
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+def get_sqlite_history_raw():
+    """Uncached full dump for CSV export — fresh data for experiments."""
+    try:
+        uri = f"file:{DB_PATH}?mode=ro"
+        conn = sqlite3.connect(uri, uri=True)
+        df = pd.read_sql_query(
+            "SELECT task_id, task_type, worker_name, execution_latency, total_latency, "
+            "waiting_time, retry_count, final_status, model_output, input_summary, timestamp "
+            "FROM task_history ORDER BY timestamp ASC", conn)
+        conn.close()
         return df
     except Exception:
         return pd.DataFrame()
@@ -383,7 +399,7 @@ def get_latency_time_series():
         uri = f"file:{DB_PATH}?mode=ro"
         conn = sqlite3.connect(uri, uri=True)
         df = pd.read_sql_query(
-            "SELECT timestamp, execution_latency, task_type, final_status FROM task_history ORDER BY timestamp DESC LIMIT 200",
+            "SELECT timestamp, execution_latency, total_latency, waiting_time, task_type, final_status FROM task_history ORDER BY timestamp DESC LIMIT 200",
             conn)
         conn.close()
         return df
@@ -1066,6 +1082,33 @@ elif page == "Metrics":
                 else:
                     st.info("No execution data yet.")
 
+        st.markdown("<br>", unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown("##### Waiting Time Distribution (by Task Type)")
+            if not ts_df.empty and "waiting_time" in ts_df.columns:
+                wdf = ts_df.dropna(subset=["waiting_time"])
+                if not wdf.empty:
+                    fig_wait = go.Figure()
+                    for ttype in TASK_TYPES:
+                        sub = wdf[wdf["task_type"] == ttype]["waiting_time"]
+                        if not sub.empty:
+                            fig_wait.add_trace(go.Box(
+                                y=sub, name=TASK_NAMES.get(ttype, ttype),
+                                marker_color=TASK_COLORS[ttype],
+                                boxpoints=False, line=dict(width=1)))
+                    fig_wait.update_layout(
+                        margin=dict(l=0, r=0, t=10, b=0), height=300,
+                        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                        yaxis=dict(title="Waiting Time (s)", color='gray',
+                                   showgrid=True, gridcolor='rgba(128,128,128,0.2)'),
+                        xaxis=dict(color='gray'),
+                        legend=dict(font=dict(color='gray')))
+                    st.plotly_chart(fig_wait, use_container_width=True, key="metrics_waiting")
+                else:
+                    st.info("No waiting time data yet (waiting_time requires v1.6 task_history).")
+            else:
+                st.info("No waiting time data yet (waiting_time requires v1.6 task_history).")
+
     render_metrics()
 
 
@@ -1074,7 +1117,7 @@ elif page == "Logs":
     st.title("📄 Recent Task History Logs")
     st.markdown("<hr style='border-color: #30363d;'>", unsafe_allow_html=True)
 
-    btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 2])
+    btn_col1, btn_col2, btn_col3, btn_col4 = st.columns([1, 1, 1, 2])
     with btn_col1:
         if st.button("🫥 Clear Display", use_container_width=True):
             st.session_state.logs_hidden = True
@@ -1100,6 +1143,15 @@ elif page == "Logs":
                 if st.button("❌ Cancel", use_container_width=True):
                     st.session_state.confirm_delete = False
                     st.rerun()
+    with btn_col3:
+        # CSV export for experiment data collection
+        try:
+            exp_df = get_sqlite_history_raw()
+            csv_data = exp_df.to_csv(index=False).encode("utf-8")
+            st.download_button("📥 Export CSV", csv_data, file_name="task_history.csv",
+                               mime="text/csv", use_container_width=True)
+        except Exception:
+            st.button("📥 Export CSV", disabled=True, use_container_width=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -1346,11 +1398,18 @@ elif page == "Settings":
         with c3:
             base_delay = st.slider("Base Delay (s)", 1, 10, int(fc["base_delay"]), key="base_delay")
 
+        retry_mode = st.selectbox("Retry Mode", ["backoff_jitter", "backoff", "immediate"],
+                                  index=["backoff_jitter", "backoff", "immediate"].index(fc["retry_mode"]),
+                                  key="retry_mode",
+                                  help="backoff_jitter: 2^N + jitter | backoff: 2^N | immediate: 0s. "
+                                       "Set Max Retries=0 for 'no retry'.")
+
         st.caption("Fault injection simulates transient failures (Chaos Engineering). "
-                   "Retried tasks use exponential backoff into the delayed queue.")
+                   "Retried tasks use backoff into the delayed queue.")
         if st.button("⚙️ Apply Fault Config", use_container_width=True, key="apply_fault"):
-            if set_fault_config(failure_rate / 100.0, max_retries, base_delay):
-                st.success(f"Fault config applied: rate={failure_rate}%, retries={max_retries}, delay={base_delay}s")
+            if set_fault_config(failure_rate / 100.0, max_retries, base_delay, retry_mode):
+                st.success(f"Fault config applied: rate={failure_rate}%, retries={max_retries}, "
+                           f"delay={base_delay}s, mode={retry_mode}")
             else:
                 st.error("Failed to set fault config.")
 
