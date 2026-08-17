@@ -65,10 +65,6 @@ def _retry_delay(mode: str, attempt: int, base: float) -> float:
     # backoff_jitter (default) and backoff+jitter
     return exp + random.uniform(0, 1)
 
-# legacy compat
-if WORKER_TYPE == "FAST" and "FAST" in WORKER_NAME and WORKER_NAME.startswith("Worker_"):
-    WORKER_NAME = "worker-fast-gpu"
-
 r = redis.Redis(
     host=REDIS_HOST, port=6379, db=0,
     decode_responses=True,
@@ -355,7 +351,6 @@ EXECUTORS = {
 # Main loop
 
 SIGNAL = shutdown
-
 
 
 heartbeat_counter = 0

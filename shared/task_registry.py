@@ -3,6 +3,8 @@ Task type registry — single source of truth for all task metadata. v1.5
 Imported by api, worker, generator, and dashboard.
 """
 
+# expected_time values are the SETF scheduling scores. They are calibrated from
+# the 2026-08-13 pilot run (mean execution_latency per task type, seconds)
 TASK_REGISTRY = {
     "IC": {
         "name": "Image Captioning",
@@ -15,7 +17,7 @@ TASK_REGISTRY = {
         "model_name": "Salesforce/blip-image-captioning-base",
         "package": "transformers",
         "engine_key": "blip",
-        "expected_time": 1.0,
+        "expected_time": 0.3,   # measured ~0.30 s (GPU)
     },
     "SA": {
         "name": "Sentiment Analysis",
@@ -28,7 +30,7 @@ TASK_REGISTRY = {
         "model_name": "distilbert-base-uncased-finetuned-sst-2-english",
         "package": "transformers",
         "engine_key": "distilbert",
-        "expected_time": 2.0,
+        "expected_time": 0.8,   # measured ~0.84 s
     },
     "SIM": {
         "name": "Semantic Similarity",
@@ -41,7 +43,7 @@ TASK_REGISTRY = {
         "model_name": "all-MiniLM-L6-v2",
         "package": "sentence_transformers",
         "engine_key": "sbert",
-        "expected_time": 1.0,
+        "expected_time": 3.4,   # measured ~3.4 s under CPU contention
     },
     "SUM": {
         "name": "Text Summarization",
@@ -54,7 +56,7 @@ TASK_REGISTRY = {
         "model_name": "t5-small",
         "package": "transformers",
         "engine_key": "t5",
-        "expected_time": 4.0,
+        "expected_time": 11.6,  # measured ~11.6 s under CPU contention
     },
 }
 

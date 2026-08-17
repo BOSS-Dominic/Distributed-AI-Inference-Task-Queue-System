@@ -1,7 +1,9 @@
 """
 Workload generator — injects tasks using a Poisson arrival process. v1.5
 Invoked by Dashboard via:
-  docker exec workload-generator python generator.py <total> <rate> <ic> <sa> <sim> <sum> [priority mix]
+  docker exec workload-generator python generator.py <total> <rate> <ic> <sa> <sim> <sum> [delay_ratio]
+delay_ratio (optional, 0-1): fraction of submitted tasks sent with a 1-5s
+scheduled_at offset so they land in queue:delayed (delay-injection experiments).
 """
 
 import logging
@@ -68,7 +70,8 @@ def _load_seeds():
 
 def inject_workload(total_tasks: int = 30, arrival_rate: float = 20.0,
                     ic_count: int | None = None, sa_count: int | None = None,
-                    sim_count: int | None = None, sum_count: int | None = None):
+                    sim_count: int | None = None, sum_count: int | None = None,
+                    delay_ratio: float = 0.0):
     if not _seed_images and not _seed_prompts:
         _load_seeds()
 
@@ -105,6 +108,12 @@ def inject_workload(total_tasks: int = 30, arrival_rate: float = 20.0,
         R = TASK_REGISTRY[task_type]
         prio = random.choices(PRIORITY_KEYS, weights=DEFAULT_PRIORITY_MIX, k=1)[0]
 
+        # optional delay injection: forward scheduled_at to the gateway
+        delay_s = None
+        if delay_ratio > 0 and random.random() < delay_ratio:
+            delay_s = round(random.uniform(1.0, 5.0), 2)
+            delay_count += 1
+
         try:
             if R["requires_file"] and _seed_images:
                 img_path = random.choice(_seed_images)
@@ -113,9 +122,12 @@ def inject_workload(total_tasks: int = 30, arrival_rate: float = 20.0,
                 files = {
                     "file": (os.path.basename(img_path), file_content, "image/jpeg"),
                 }
+                data = {"task_type": task_type, "priority": prio}
+                if delay_s is not None:
+                    data["scheduled_at"] = str(delay_s)
                 resp = requests.post(
                     f"{API_GATEWAY}/v1/inference/tasks",
-                    data={"task_type": task_type, "priority": prio},
+                    data=data,
                     files=files,
                     timeout=10,
                 )
@@ -134,9 +146,12 @@ def inject_workload(total_tasks: int = 30, arrival_rate: float = 20.0,
                 else:
                     text1 = random.choice(_seed_prompts)
                     text2 = random.choice(_seed_prompts)
+                data = {"task_type": task_type, "text_data": text1, "text_data_2": text2, "priority": prio}
+                if delay_s is not None:
+                    data["scheduled_at"] = str(delay_s)
                 resp = requests.post(
                     f"{API_GATEWAY}/v1/inference/tasks",
-                    data={"task_type": task_type, "text_data": text1, "text_data_2": text2, "priority": prio},
+                    data=data,
                     timeout=10,
                 )
                 if resp.status_code == 202:
@@ -159,9 +174,12 @@ def inject_workload(total_tasks: int = 30, arrival_rate: float = 20.0,
                 else:
                     text = random.choice(_seed_prompts)
 
+                data = {"task_type": task_type, "text_data": text, "priority": prio}
+                if delay_s is not None:
+                    data["scheduled_at"] = str(delay_s)
                 resp = requests.post(
                     f"{API_GATEWAY}/v1/inference/tasks",
-                    data={"task_type": task_type, "text_data": text, "priority": prio},
+                    data=data,
                     timeout=10,
                 )
                 if resp.status_code == 202:
@@ -202,5 +220,6 @@ if __name__ == "__main__":
     sa   = int(sys.argv[4]) if len(sys.argv) > 4 else None
     sim  = int(sys.argv[5]) if len(sys.argv) > 5 else None
     sum_ = int(sys.argv[6]) if len(sys.argv) > 6 else None
+    delay_ratio = float(sys.argv[7]) if len(sys.argv) > 7 else 0.0
 
-    inject_workload(total, rate, ic, sa, sim, sum_)
+    inject_workload(total, rate, ic, sa, sim, sum_, delay_ratio)

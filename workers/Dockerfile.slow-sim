@@ -1,5 +1,5 @@
 # CPU Worker (SIM Specialist) — SBERT only
-FROM python:3.10-slim
+FROM python:3.11-slim
 
 # build tools (for PyTorch)
 RUN apt-get update && apt-get install -y --no-install-recommends \

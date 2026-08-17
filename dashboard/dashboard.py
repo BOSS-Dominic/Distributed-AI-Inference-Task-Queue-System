@@ -836,7 +836,7 @@ elif page == "Tasks":
                 sum_count = st.slider("SUM (Summarization)", 0, 500, key="stress_sum", on_change=on_type_change)
 
             actual_total = ic_count + sa_count + sim_count + sum_count
-            arate = st.slider("Arrival Rate λ (tasks/s)", 5.0, 100.0, 20.0, 5.0)
+            arate = st.slider("Arrival Rate λ (tasks/s)", 0.5, 100.0, 20.0, 0.5)
             jb_est = max(1, (sa_count + sim_count + sum_count) // 10)
             if actual_total > 0:
                 st.caption(f"IC: {ic_count} | SA: {sa_count} | SIM: {sim_count} | SUM: {sum_count} | ~{jb_est} jailbreak | ~{actual_total/arate:.0f}s expected")
