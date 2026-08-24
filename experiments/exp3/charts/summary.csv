@@ -1,0 +1,3 @@
+config,n_tasks,sim_median_wait
+2 CPU generalists,500,824.715829
++ SIM/SUM specialists,500,14.225719

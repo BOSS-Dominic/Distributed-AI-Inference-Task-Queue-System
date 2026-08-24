@@ -1398,11 +1398,11 @@ elif page == "Settings":
         with c3:
             base_delay = st.slider("Base Delay (s)", 1, 10, int(fc["base_delay"]), key="base_delay")
 
-        retry_mode = st.selectbox("Retry Mode", ["backoff_jitter", "backoff", "immediate"],
-                                  index=["backoff_jitter", "backoff", "immediate"].index(fc["retry_mode"]),
+        retry_mode = st.selectbox("Retry Mode", ["backoff_jitter", "backoff", "immediate", "none"],
+                                  index=["backoff_jitter", "backoff", "immediate", "none"].index(fc["retry_mode"]),
                                   key="retry_mode",
-                                  help="backoff_jitter: 2^N + jitter | backoff: 2^N | immediate: 0s. "
-                                       "Set Max Retries=0 for 'no retry'.")
+                                  help="backoff_jitter: 2^N + jitter | backoff: 2^N | immediate: 0s | none: no retry, "
+                                       "failures go straight to DLQ.")
 
         st.caption("Fault injection simulates transient failures (Chaos Engineering). "
                    "Retried tasks use backoff into the delayed queue.")

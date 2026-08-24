@@ -62,7 +62,7 @@ def _retry_delay(mode: str, attempt: int, base: float) -> float:
     exp = base * (2 ** (attempt - 1))
     if mode == "backoff":
         return exp
-    # backoff_jitter (default) and backoff+jitter
+    # backoff and backoff+jitter
     return exp + random.uniform(0, 1)
 
 r = redis.Redis(
@@ -250,9 +250,24 @@ def _enqueue(tt: str, payload_str: str):
     return q
 
 
+# Atomically claim all due delayed members (read + remove in one step) so two
+# workers sweeping concurrently cannot both re-enqueue the same task.
+_SWEEP_LUA = """
+local due = redis.call('zrangebyscore', KEYS[1], 0, ARGV[1])
+if #due > 0 then
+    redis.call('zremrangebyscore', KEYS[1], 0, ARGV[1])
+end
+return due
+"""
+
+
 def _sweep_delayed():
     now = time.time()
-    items = r.zrangebyscore("queue:delayed", 0, now)
+    try:
+        items = r.eval(_SWEEP_LUA, 1, "queue:delayed", now)
+    except Exception as e:
+        logger.warning("%s Delayed sweep eval failed: %s", WORKER_NAME, e)
+        return
     if not items:
         return
     logger.info("%s Sweeping %d delayed task(s)", WORKER_NAME, len(items))
@@ -264,7 +279,6 @@ def _sweep_delayed():
             r.delete(f"config:delay:{p['task_id']}")
         except Exception as e:
             logger.warning("%s Delayed sweep error: %s", WORKER_NAME, e)
-    r.zremrangebyscore("queue:delayed", 0, now)
 
 
 def _replay_dead():

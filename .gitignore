@@ -20,12 +20,17 @@ storage/inputs/*.bmp
 storage/outputs/*
 !storage/outputs/.gitkeep
 
-# SQLite  
+# SQLite
 storage/*.db
 storage/*.db-wal
 storage/*.db-shm
+storage/*.db.backup*
 
-# Python  
+# Experiment raw data (regenerable via scripts/run_experiments.py; keep charts)
+experiments/exp*/*_run*.csv
+experiments/manifest.csv
+
+# Python
 __pycache__/
 *.pyc
 *.pyo

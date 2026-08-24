@@ -2,8 +2,6 @@
 Workload generator — injects tasks using a Poisson arrival process. v1.5
 Invoked by Dashboard via:
   docker exec workload-generator python generator.py <total> <rate> <ic> <sa> <sim> <sum> [delay_ratio]
-delay_ratio (optional, 0-1): fraction of submitted tasks sent with a 1-5s
-scheduled_at offset so they land in queue:delayed (delay-injection experiments).
 """
 
 import logging
