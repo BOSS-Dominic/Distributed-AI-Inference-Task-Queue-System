@@ -302,26 +302,36 @@ def plot_exp3():
         print("  exp3: no data, skipping"); return
     labels = ["2 CPU generalists", "+ SIM/SUM specialists"]
 
-    # stacked area: cumulative completed tasks per worker over time
+    # cumulative completed tasks per worker over time. Runs are concatenated at
+    # their within-run elapsed time (each run restarts at t=0) so the x-axis has
+    # no gaps from runs executed on different days; plateaus then reflect a
+    # worker spending time on a slow SUM execution rather than inter-run idle.
     for p, l in zip(prefixes, labels):
         frames = cond.get(p, [])
         if not frames:
             continue
-        df = pd.concat(frames, ignore_index=True)
-        df["ts"] = pd.to_datetime(df["timestamp"])
-        df = df.sort_values("ts")
-        df["elapsed"] = (df["ts"] - df["ts"].iloc[0]).dt.total_seconds()
+        workers = sorted(set(w for f in frames for w in f["worker_name"].dropna()))
+        series = {w: ([], []) for w in workers}   # elapsed, cumulative count
+        offset = 0.0
+        for f in frames:
+            f = f.copy()
+            f["ts"] = pd.to_datetime(f["timestamp"])
+            f = f.sort_values("ts")
+            run_elapsed = (f["ts"] - f["ts"].iloc[0]).dt.total_seconds()
+            f["elapsed"] = run_elapsed + offset
+            for w in workers:
+                sub = f[f["worker_name"] == w]
+                if sub.empty:
+                    continue
+                base = len(series[w][1])
+                series[w][0].extend(sub["elapsed"].values)
+                series[w][1].extend(range(base + 1, base + len(sub) + 1))
+            offset += run_elapsed.max()
         fig, ax = plt.subplots(figsize=(7, 3.8))
-        workers = sorted(df["worker_name"].dropna().unique())
-        base = {w: [] for w in workers}
         for w in workers:
-            sub = df[df["worker_name"] == w].sort_values("ts")
-            base[w] = (sub["elapsed"].values, range(1, len(sub) + 1))
-        prev = [0] * len(df)
-        for w in workers:
-            el, cnt = base[w]
-            ax.plot(el, list(cnt), label=w, lw=1.6)
-        ax.set_xlabel("Elapsed time (s)"); ax.set_ylabel("Cumulative completed tasks")
+            ax.plot(series[w][0], series[w][1], label=w, lw=1.6)
+        ax.set_xlabel("Cumulative processing time (s)")
+        ax.set_ylabel("Cumulative completed tasks")
         ax.set_title(l, fontsize=11)
         ax.legend(fontsize=8, ncol=2)
         finish(exp, fig, f"worker_throughput_{p.replace('exp3_', '')}.png")
