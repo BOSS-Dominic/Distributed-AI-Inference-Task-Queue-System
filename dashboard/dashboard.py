@@ -452,6 +452,10 @@ def delete_all_logs():
         conn.execute("DELETE FROM task_history")
         conn.commit()
         conn.close()
+        # keep the dead-letter queue consistent with the cleared history:
+        # otherwise DLQ records (exhausted retries) survive a purge while the
+        # failure counts (derived from task_history) reset — the two views diverge.
+        r.delete("queue:dead")
         clear_all_caches()
         return True
     except Exception:

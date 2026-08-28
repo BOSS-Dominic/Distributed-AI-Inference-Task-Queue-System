@@ -211,22 +211,32 @@ signal.signal(signal.SIGINT, shutdown)
 # Queue pop with optional zset support
 
 def _pop_queue(qname: str, zset: bool):
-    try:
-        if zset:
-            result = r.bzpopmin(qname, timeout=1)
-            if result is None:
+    """Pop with the primitive matching the mode.
+
+    If the key still holds the *other* structure (stale after a mode switch,
+    e.g. a leftover ZSET when the mode is now FIFO), fall back to the matching
+    primitive to drain it rather than crashing the worker loop.
+    """
+    def _try(use_zset: bool):
+        if use_zset:
+            res = r.bzpopmin(qname, timeout=1)
+            if res is None:
                 return None
-            return (result[0], result[1], result[2])
-        else:
-            result = r.blpop(qname, timeout=1)
-            if result is None:
-                return None
-            return (result[0], result[1], None)
-    except redis.exceptions.ResponseError:
-        result = r.blpop(qname, timeout=1)
-        if result is None:
+            return (res[0], res[1], res[2])
+        res = r.blpop(qname, timeout=1)
+        if res is None:
             return None
-        return (result[0], result[1], None)
+        return (res[0], res[1], None)
+
+    try:
+        return _try(zset)
+    except redis.exceptions.ResponseError:
+        # wrong structure — try the alternate primitive to drain stale tasks
+        try:
+            return _try(not zset)
+        except redis.exceptions.ResponseError:
+            # persistent mismatch; skip this iteration instead of crashing
+            return None
 
 
 # Delayed queue

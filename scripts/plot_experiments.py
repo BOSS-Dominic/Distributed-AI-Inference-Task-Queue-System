@@ -366,15 +366,17 @@ def plot_exp4():
     if not cond:
         print("  exp4: no data, skipping"); return
 
-    # lambda vs P50/P95/P99 total_latency
+    # lambda vs P50/P95/P99 waiting_time (queue wait = the saturation indicator;
+    # NOTE: total_latency in the CSV equals execution_latency because the worker
+    # sets first_attempt_time at pop, so it excludes queue waiting.)
     fig, ax = plt.subplots(figsize=(6.5, 4))
     for q, col, color in [("P50", "p50", "#2f81f7"), ("P95", "p95", "#d29922"), ("P99", "p99", "#f85149")]:
         ys = []
         for p in prefixes:
-            st = run_stats(cond.get(p, []), "total_latency")
+            st = run_stats(cond.get(p, []), "waiting_time")
             ys.append(st[col].mean() if not st.empty else float("nan"))
         ax.plot(lambdas, ys, marker="o", label=q, color=color, lw=1.8)
-    ax.set_xlabel("Arrival rate λ (tasks/s)"); ax.set_ylabel("Total latency (s)")
+    ax.set_xlabel("Arrival rate λ (tasks/s)"); ax.set_ylabel("Waiting time (s)")
     ax.set_xscale("log"); ax.legend()
     finish(exp, fig, "lambda_latency.png")
 
@@ -397,7 +399,7 @@ def plot_exp4():
 
     rows = []
     for l, p in zip(lambdas, prefixes):
-        st = run_stats(cond.get(p, []), "total_latency")
+        st = run_stats(cond.get(p, []), "waiting_time")
         if st.empty:
             continue
         rows.append(dict(lambda_=l, p50=st["p50"].mean(), p95=st["p95"].mean(),
