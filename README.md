@@ -66,6 +66,18 @@ Two layers with separate responsibilities:
 - **Prometheus** — scrape config and eight alert rules in `observability/prometheus/alert_rules.yml`.
 - **Grafana** — provisioned as code: datasource, dashboard JSON and rules ship with the repository.
 
+## Observability in action
+
+Screenshots of the running stack (branch `feat/observability`):
+
+**Prometheus — all five scrape targets healthy** (`cadvisor`, `gateway`, `gpu`, `prometheus`, `redis`):
+
+![Prometheus target health](docs/screenshots/prometheus-targets.png)
+
+**Grafana — live dashboard**: queue depth draining, GPU utilisation/temperature, task throughput with p95 latency, and failure ratio:
+
+![Grafana observability dashboard](docs/screenshots/grafana-dashboard.png)
+
 ## CI/CD
 
 `.github/workflows/ci.yml`: `lint` → `test` (pytest) → `validate` (compose, `promtool check config`, `promtool check rules`, dashboard JSON) → `build` (lightweight images) → `publish` (GHCR on `main`) → `deploy` (manual, self-hosted runner labelled `gpu-host`). The 18 GB GPU worker image is built on the GPU host, not in CI.
@@ -108,3 +120,10 @@ docker compose up -d
 # 面板: http://localhost:9501
 # API 文档: http://localhost:8000/docs
 ```
+
+## 可观测性实拍
+
+截图见上方英文区（"Observability in action"）：
+
+- **Prometheus**：五个抓取目标全部健康（cadvisor / gateway / gpu / prometheus / redis）
+- **Grafana**：队列深度消化曲线、GPU 利用率/温度、吞吐与 p95 延迟、失败率实时面板
