@@ -1,0 +1,73 @@
+# Alert rules — mirror the rule-based alert design of the thesis dashboard
+# (heartbeat loss, utilisation, GPU temperature, failure rate, queue backlog).
+# Validated in CI with `promtool check rules`.
+
+groups:
+  - name: task-queue-alerts
+    rules:
+      - alert: WorkerContainerDown
+        # The thesis alert fired on a missing worker heartbeat; here any
+        # worker-* container disappearing from cAdvisor raises the same signal.
+        expr: absent(container_last_seen{name=~"worker-.+"})
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Worker container is missing"
+          description: "No container_last_seen series for any worker-* container."
+
+      - alert: HighContainerCpu
+        expr: sum by (name) (rate(container_cpu_usage_seconds_total{name=~"worker-.+"}[1m])) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Worker {{ $labels.name }} CPU above 85%"
+
+      - alert: HighContainerMemory
+        expr: sum by (name) (container_memory_working_set_bytes{name=~"worker-.+"}) / 1024 / 1024 / 1024 > 8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Worker {{ $labels.name }} memory above 8 GiB"
+
+      - alert: GpuUtilizationCritical
+        expr: avg(DCGM_FI_DEV_GPU_UTIL) > 90
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GPU utilisation above 90% for 2 minutes"
+
+      - alert: GpuTemperatureHigh
+        expr: avg(DCGM_FI_DEV_GPU_TEMP) > 80
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "GPU temperature above 80 C"
+
+      - alert: QueueBacklog
+        expr: sum(redis_key_size{key=~"queue:(heavy|light)"}) > 50
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Queue backlog above 50 tasks"
+
+      - alert: DeadLetterGrowth
+        expr: redis_key_size{key="queue:dead"} > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Dead-letter queue is non-empty"
+
+      - alert: TaskFailureRateHigh
+        expr: sum(rate(gateway_tasks_audited_total{status=~"FAILED|EXHAUSTED"}[5m])) / clamp_min(sum(rate(gateway_tasks_submitted_total[5m])), 0.001) > 0.2
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Task failure rate above 20% over 5 minutes"

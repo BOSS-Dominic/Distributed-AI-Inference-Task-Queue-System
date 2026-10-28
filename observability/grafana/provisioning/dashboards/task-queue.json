@@ -1,0 +1,62 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "links": [],
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Queue depth (heavy / light / delayed / dead)",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "targets": [
+        {"expr": "redis_key_size{key=\"queue:heavy\"}", "refId": "A", "legendFormat": "heavy (redis_exporter)"},
+        {"expr": "redis_key_size{key=\"queue:light\"}", "refId": "B", "legendFormat": "light (redis_exporter)"},
+        {"expr": "redis_key_size{key=\"queue:delayed\"}", "refId": "C", "legendFormat": "delayed (redis_exporter)"},
+        {"expr": "redis_key_size{key=\"queue:dead\"}", "refId": "D", "legendFormat": "dead (redis_exporter)"},
+        {"expr": "gateway_queue_depth{queue=\"heavy\"}", "refId": "E", "legendFormat": "heavy (gateway gauge)"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "GPU utilisation (%) and temperature (C)",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "targets": [
+        {"expr": "DCGM_FI_DEV_GPU_UTIL", "refId": "A", "legendFormat": "GPU util %"},
+        {"expr": "DCGM_FI_DEV_GPU_TEMP", "refId": "B", "legendFormat": "GPU temp C"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Task throughput and p95 latency",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "targets": [
+        {"expr": "sum(rate(gateway_tasks_submitted_total[1m]))", "refId": "A", "legendFormat": "submitted/s"},
+        {"expr": "sum(rate(gateway_tasks_audited_total[1m]))", "refId": "B", "legendFormat": "completed/s"},
+        {"expr": "histogram_quantile(0.95, sum by (le) (rate(gateway_task_latency_seconds_bucket[5m])))", "refId": "C", "legendFormat": "p95 latency (s)"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Failure ratio (%) and top worker CPU",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []},
+      "targets": [
+        {"expr": "100 * sum(rate(gateway_tasks_audited_total{status=~\"FAILED|EXHAUSTED\"}[5m])) / clamp_min(sum(rate(gateway_tasks_submitted_total[5m])), 0.001)", "refId": "A", "legendFormat": "failure %"},
+        {"expr": "topk(3, sum by (name) (rate(container_cpu_usage_seconds_total{name=~\"worker-.+\"}[1m])) * 100)", "refId": "B", "legendFormat": "{{name}} CPU %"}
+      ]
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["task-queue", "observability"],
+  "templating": {"list": []},
+  "time": {"from": "now-15m", "to": "now"},
+  "timezone": "browser",
+  "title": "AI Task Queue - Observability",
+  "uid": "task-queue-observe",
+  "version": 1
+}
