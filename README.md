@@ -87,6 +87,21 @@ Screenshots of the running stack (branch `feat/observability`):
 - Committed Dockerfiles use the official PyPI index. In a restricted network, add a pip mirror to the `pip install` lines locally (these local tweaks are intentionally not committed).
 - Observability images can be overridden via `.env` (copy `.env.example`). On a restricted network, configure a Docker registry mirror and set `CADVISOR_IMAGE` (gcr.io is not covered by registry mirrors) — see `.env.example` for ready-made China mirror values.
 
+## Cloud deployment
+
+The stack can run on a single CPU-only cloud VM with HTTPS — no GPU required:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.cloud.yml up -d --build
+```
+
+The cloud override publishes **only** ports 80/443 (Caddy, automatic HTTPS), keeps
+Redis / Prometheus / Grafana / the gateway on the internal compose network,
+replaces the GPU worker with `worker-cpu-generalist` (CPU torch, all four models
+pre-downloaded — see `workers/Dockerfile.fast-cpu`) and disables `dcgm-exporter`.
+See `docs/cloud-deploy.md` for the security-group rules, deployment and teardown
+steps. The GPU-accelerated path is demonstrated locally with the base compose file.
+
 ---
 
 # 分布式 AI 推理任务队列系统

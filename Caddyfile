@@ -1,0 +1,20 @@
+# Caddy reverse proxy for the cloud deployment.
+#
+# Serves the Streamlit control dashboard at the root and Grafana under /grafana.
+# With a real domain in $DOMAIN, Caddy obtains a Let's Encrypt certificate
+# automatically (ports 80 and 443 must be open in the security group).
+#
+#   DOMAIN=demo.example.com docker compose -f docker-compose.yml -f docker-compose.cloud.yml up -d
+#
+# On a bare IP or localhost, Caddy serves plain HTTP on port 80.
+
+{$DOMAIN} {
+	# Grafana under a sub-path (GF_SERVER_ROOT_URL / SERVE_FROM_SUB_PATH are set
+	# in docker-compose.cloud.yml to match).
+	handle_path /grafana/* {
+		reverse_proxy grafana:3000
+	}
+
+	# Streamlit control dashboard (websockets are handled by Caddy natively).
+	reverse_proxy streamlit-dashboard:8501
+}

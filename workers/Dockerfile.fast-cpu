@@ -1,0 +1,46 @@
+# CPU-only generalist worker for cloud deployment.
+#
+# The GPU worker image (Dockerfile.fast) builds on nvidia/cuda and is meant for
+# a host with an NVIDIA GPU. On a CPU-only cloud VM the same role is served by
+# this image: CPU torch + a warm-up that pre-downloads ALL FOUR models
+# (including BLIP, which the FAST worker loads at startup — worker.py:99-106).
+#
+# Build:  docker compose build worker-cpu-generalist
+#        (add --build-arg HF_ENDPOINT=https://hf-mirror.com on a slow network)
+FROM python:3.11-slim
+
+ARG HF_ENDPOINT=https://huggingface.co
+ENV HF_ENDPOINT=${HF_ENDPOINT}
+
+# build tools (for PyTorch)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential && rm -rf /var/lib/apt/lists/*
+
+# CPU-only PyTorch from the official CPU wheel index, then the rest
+RUN pip install --no-cache-dir \
+    torch --index-url https://download.pytorch.org/whl/cpu
+RUN pip install --no-cache-dir \
+    transformers redis pillow requests sentence-transformers numpy
+
+WORKDIR /app
+COPY shared/ /app/shared/
+COPY workers/worker.py .
+
+# warm-up: pre-download all 4 models (incl. BLIP) at build time, fully offline at runtime
+RUN python -c "\
+from transformers import pipeline, BlipProcessor, BlipForConditionalGeneration, T5Tokenizer, T5ForConditionalGeneration;\
+from sentence_transformers import SentenceTransformer;\
+print('Downloading BLIP-base (image captioning)...');\
+BlipProcessor.from_pretrained('Salesforce/blip-image-captioning-base');\
+BlipForConditionalGeneration.from_pretrained('Salesforce/blip-image-captioning-base');\
+print('Downloading SBERT all-MiniLM-L6-v2 (semantic similarity)...');\
+SentenceTransformer('all-MiniLM-L6-v2');\
+print('Downloading t5-small (text summarization)...');\
+T5Tokenizer.from_pretrained('t5-small');\
+T5ForConditionalGeneration.from_pretrained('t5-small');\
+print('Downloading DistilBERT SST-2 (sentiment analysis)...');\
+pipeline('sentiment-analysis', model='distilbert-base-uncased-finetuned-sst-2-english');\
+print('All 4 models cached successfully.');\
+"
+
+CMD ["python", "worker.py"]

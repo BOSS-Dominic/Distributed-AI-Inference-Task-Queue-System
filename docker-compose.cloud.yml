@@ -1,0 +1,102 @@
+# Cloud deployment overrides — CPU-only VM (no GPU, no host port exposure).
+#
+# Usage (on the cloud VM, from the repository root):
+#   docker compose -f docker-compose.yml -f docker-compose.cloud.yml up -d --build
+#
+# What changes vs. the local stack:
+#   * every application/observability port is un-published (`!reset []`), so
+#     Redis, the gateway, Prometheus, Grafana, cAdvisor, etc. are reachable only
+#     on the internal compose network;
+#   * only Caddy is published (80/443) and terminates HTTPS;
+#   * the GPU worker (Dockerfile.fast, CUDA base) is disabled and replaced by
+#     worker-cpu-generalist (Dockerfile.fast-cpu: CPU torch + all 4 models);
+#   * dcgm-exporter is disabled (no GPU on the host);
+#   * the two CPU generalist workers are disabled — three workers are enough for
+#     a demo and leave CPU headroom on a 4-core box;
+#   * Grafana is served under /grafana behind Caddy.
+
+services:
+  redis-broker:
+    ports: !reset []
+
+  fastapi-gateway:
+    ports: !reset []
+
+  streamlit-dashboard:
+    ports: !reset []
+
+  cadvisor:
+    ports: !reset []
+
+  redis-exporter:
+    ports: !reset []
+
+  prometheus:
+    ports: !reset []
+
+  grafana:
+    ports: !reset []
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_SERVER_ROOT_URL=${CLOUD_URL:-http://localhost}/grafana
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+
+  # GPU services are only started with `--profile gpu` (GPU hosts only).
+  dcgm-exporter:
+    profiles: ["gpu"]
+
+  worker-fast-gpu:
+    profiles: ["gpu"]
+
+  worker-slow-cpu-1:
+    profiles: ["extra"]
+
+  worker-slow-cpu-2:
+    profiles: ["extra"]
+
+  # CPU generalist replaces the GPU worker on CPU-only hosts.
+  worker-cpu-generalist:
+    build:
+      context: .
+      dockerfile: workers/Dockerfile.fast-cpu
+    container_name: worker-cpu-generalist
+    environment:
+      - WORKER_TYPE=FAST
+      - WORKER_NAME=worker-cpu-generalist
+      - REDIS_HOST=redis-broker
+      - API_GATEWAY_URL=http://fastapi-gateway:8000
+      - HF_HUB_OFFLINE=1
+      - TRANSFORMERS_OFFLINE=1
+      - TASK_FAILURE_RATE=0
+      - MAX_RETRIES=3
+      - RETRY_BASE_DELAY=2.0
+      - RETRY_MODE=backoff_jitter
+    volumes:
+      - ./storage:/app/storage
+    depends_on:
+      redis-broker:
+        condition: service_healthy
+      fastapi-gateway:
+        condition: service_started
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOMAIN=${DOMAIN:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+    depends_on:
+      - streamlit-dashboard
+      - grafana
+
+volumes:
+  caddy_data:
+  caddy_config:
