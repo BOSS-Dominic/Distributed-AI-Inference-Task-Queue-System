@@ -73,6 +73,7 @@ Two layers with separate responsibilities:
 ## Local notes
 
 - Committed Dockerfiles use the official PyPI index. In a restricted network, add a pip mirror to the `pip install` lines locally (these local tweaks are intentionally not committed).
+- Observability images can be overridden via `.env` (copy `.env.example`). On a restricted network, configure a Docker registry mirror and set `CADVISOR_IMAGE` (gcr.io is not covered by registry mirrors) — see `.env.example` for ready-made China mirror values.
 
 ---
 

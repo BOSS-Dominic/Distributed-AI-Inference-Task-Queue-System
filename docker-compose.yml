@@ -235,8 +235,10 @@ services:
     restart: unless-stopped
 
   #  Observability stack (post-thesis): infrastructure + business metrics 
+  #  Image references are overridable via env vars (see .env.example), e.g. to
+  #  point at a registry mirror on a restricted network.
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:latest
+    image: ${CADVISOR_IMAGE:-gcr.io/cadvisor/cadvisor:latest}
     container_name: cadvisor
     ports:
       - "8081:8080"
@@ -250,7 +252,7 @@ services:
         condition: service_healthy
 
   redis-exporter:
-    image: oliver006/redis_exporter:latest
+    image: ${REDIS_EXPORTER_IMAGE:-oliver006/redis_exporter:latest}
     container_name: redis-exporter
     command: ["--redis.addr=redis://redis-broker:6379", "--check-keys=queue:*"]
     ports:
@@ -261,7 +263,7 @@ services:
         condition: service_healthy
 
   dcgm-exporter:
-    image: nvcr.io/nvidia/k8s/dcgm-exporter:3.3.7-3.4.4-ubuntu22.04
+    image: ${DCGM_EXPORTER_IMAGE:-nvidia/dcgm-exporter:3.3.7-3.5.0}
     container_name: dcgm-exporter
     cap_add:
       - SYS_ADMIN
@@ -277,7 +279,7 @@ services:
     restart: unless-stopped
 
   prometheus:
-    image: prom/prometheus:latest
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:latest}
     container_name: prometheus
     ports:
       - "9090:9090"
@@ -293,7 +295,7 @@ services:
       - fastapi-gateway
 
   grafana:
-    image: grafana/grafana:latest
+    image: ${GRAFANA_IMAGE:-grafana/grafana:latest}
     container_name: grafana
     ports:
       - "3000:3000"
