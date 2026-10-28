@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 from shared.jailbreak_words import JAILBREAK_KEYWORDS
 from shared.task_registry import TASK_REGISTRY, PRIORITY_LEVELS
+from shared.retry_logic import retry_delay as _retry_delay
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis-broker")
 WORKER_TYPE = os.getenv("WORKER_TYPE", "SLOW")
@@ -55,15 +56,6 @@ def _fault_config():
         return TASK_FAILURE_RATE, MAX_RETRIES, RETRY_BASE_DELAY, RETRY_MODE
 
 
-def _retry_delay(mode: str, attempt: int, base: float) -> float:
-    """Compute retry delay per mode. attempt is 1-based."""
-    if mode == "immediate":
-        return 0.0
-    exp = base * (2 ** (attempt - 1))
-    if mode == "backoff":
-        return exp
-    # backoff and backoff+jitter
-    return exp + random.uniform(0, 1)
 
 r = redis.Redis(
     host=REDIS_HOST, port=6379, db=0,

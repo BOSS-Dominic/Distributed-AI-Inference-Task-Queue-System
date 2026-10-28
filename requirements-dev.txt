@@ -1,0 +1,7 @@
+# Test/CI dependencies (runtime dependencies are baked into the Docker images).
+pytest
+fastapi
+httpx
+redis
+prometheus-client
+python-multipart
