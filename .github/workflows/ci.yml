@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [main, feat/observability]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Install ruff
+        run: pip install ruff
+      - name: Ruff (syntax errors and undefined names)
+        run: ruff check --select E9,F63,F7,F82 --target-version py310 .
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Install test dependencies
+        run: pip install -r requirements-dev.txt
+      - name: Run pytest
+        run: pytest
+
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate compose file
+        run: docker compose config -q
+      - name: Validate Prometheus config and alert rules
+        run: |
+          docker run --rm --entrypoint promtool \
+            -v "$PWD/observability/prometheus:/etc/prometheus:ro" \
+            prom/prometheus:latest check config /etc/prometheus/prometheus.yml
+          docker run --rm --entrypoint promtool \
+            -v "$PWD/observability/prometheus:/etc/prometheus:ro" \
+            prom/prometheus:latest check rules /etc/prometheus/alert_rules.yml
+      - name: Validate Grafana dashboard JSON
+        run: jq -e "." observability/grafana/provisioning/dashboards/task-queue.json
+
+  build:
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build lightweight images
+        run: |
+          docker build -f api/Dockerfile -t task-queue-api:ci .
+          docker build -f generator/Dockerfile -t task-queue-generator:ci .
+          docker build -f dashboard/Dockerfile -t task-queue-dashboard:ci .
+
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lowercase image prefix
+        run: echo "IMAGE_PREFIX=$(echo 'ghcr.io/${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push images
+        run: |
+          for svc in api generator dashboard; do
+            docker build -f "$svc/Dockerfile" -t "$IMAGE_PREFIX/$svc:${{ github.sha }}" -t "$IMAGE_PREFIX/$svc:latest" .
+            docker push "$IMAGE_PREFIX/$svc:${{ github.sha }}"
+            docker push "$IMAGE_PREFIX/$svc:latest"
+          done
+
+  deploy:
+    if: github.event_name == 'workflow_dispatch'
+    needs: [test]
+    runs-on: [self-hosted, gpu-host]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rebuild and restart the stack
+        run: docker compose up -d --build --remove-orphans
+      - name: Show stack status
+        run: docker compose ps
