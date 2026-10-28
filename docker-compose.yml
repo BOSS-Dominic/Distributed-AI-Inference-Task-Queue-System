@@ -263,7 +263,7 @@ services:
         condition: service_healthy
 
   dcgm-exporter:
-    image: ${DCGM_EXPORTER_IMAGE:-nvidia/dcgm-exporter:3.3.7-3.5.0}
+    image: ${DCGM_EXPORTER_IMAGE:-nvidia/dcgm-exporter:4.6.1-4.8.4}
     container_name: dcgm-exporter
     cap_add:
       - SYS_ADMIN
