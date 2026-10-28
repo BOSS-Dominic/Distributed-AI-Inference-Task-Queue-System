@@ -1,6 +1,6 @@
 FROM python:3.10-slim
 
-RUN pip install --no-cache-dir fastapi uvicorn redis python-multipart
+RUN pip install --no-cache-dir fastapi uvicorn redis python-multipart prometheus-client
 
 WORKDIR /app
 COPY api/main.py .

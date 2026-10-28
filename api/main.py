@@ -11,7 +11,8 @@ import uuid
 
 import redis
 from fastapi import FastAPI, File, Form, UploadFile, BackgroundTasks
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 
 logging.basicConfig(
     level=logging.INFO,
@@ -25,6 +26,29 @@ from shared.task_registry import TASK_REGISTRY, PRIORITY_LEVELS, DEFAULT_PRIORIT
 app = FastAPI(
     title="Distributed AI Task Queue - Ingestion Gateway",
     version="1.5",
+)
+
+# --- Business metrics (scraped by Prometheus: http://fastapi-gateway:8000/metrics)
+TASKS_SUBMITTED = Counter(
+    "gateway_tasks_submitted_total",
+    "Tasks accepted by the gateway",
+    ["task_type", "priority", "delayed"],
+)
+TASKS_AUDITED = Counter(
+    "gateway_tasks_audited_total",
+    "Task completions written to the audit trail",
+    ["task_type", "status"],
+)
+TASK_LATENCY = Histogram(
+    "gateway_task_latency_seconds",
+    "End-to-end task latency reported by workers",
+    ["task_type"],
+    buckets=(0.1, 0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300),
+)
+QUEUE_DEPTH = Gauge(
+    "gateway_queue_depth",
+    "Current queue depth",
+    ["queue"],
 )
 
 r = redis.Redis(
@@ -159,6 +183,7 @@ async def ingest_task(
             )
         r.zadd("queue:delayed", {payload_str: time.time() + delay_s})
         r.hset("active:tasks", task_id, "PENDING")
+        TASKS_SUBMITTED.labels(task_type, priority, "true").inc()
         return JSONResponse(
             content={"status": "Accepted", "task_id": task_id, "delayed": True},
             status_code=202,
@@ -178,6 +203,7 @@ async def ingest_task(
         r.lpush(queue_name, payload_str)
 
     r.hset("active:tasks", task_id, "PENDING")
+    TASKS_SUBMITTED.labels(task_type, priority, "false").inc()
 
     return JSONResponse(
         content={"status": "Accepted", "task_id": task_id},
@@ -195,6 +221,14 @@ async def write_audit_log(data: dict, background_tasks: BackgroundTasks):
                 content={"status": "error", "detail": f"Missing field: {field}"},
                 status_code=422,
             )
+    task_type = str(data.get("task_type", "?"))
+    status = str(data.get("final_status", "?"))
+    TASKS_AUDITED.labels(task_type, status).inc()
+    latency = data.get("total_latency")
+    if latency is None:
+        latency = data.get("execution_latency")
+    if latency is not None:
+        TASK_LATENCY.labels(task_type).observe(float(latency))
     background_tasks.add_task(_write_to_sqlite, data)
     return {"status": "accepted"}
 
@@ -243,6 +277,27 @@ def queue_status():
         "active_tasks": r.hlen("active:tasks"),
         "timestamp": time.time(),
     }
+
+
+def _refresh_queue_gauges():
+    try:
+        qm = r.get("config:queue_mode") or "fifo"
+        if qm in ("priority", "setf"):
+            heavy, light = r.zcard("queue:heavy"), r.zcard("queue:light")
+        else:
+            heavy, light = r.llen("queue:heavy"), r.llen("queue:light")
+        QUEUE_DEPTH.labels("heavy").set(heavy)
+        QUEUE_DEPTH.labels("light").set(light)
+        QUEUE_DEPTH.labels("delayed").set(r.zcard("queue:delayed"))
+        QUEUE_DEPTH.labels("dead").set(r.llen("queue:dead"))
+    except Exception:
+        pass
+
+
+@app.get("/metrics")
+def metrics():
+    _refresh_queue_gauges()
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/health")
