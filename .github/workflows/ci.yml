@@ -43,6 +43,8 @@ jobs:
         run: docker compose config -q
       - name: Validate cloud compose override
         run: docker compose -f docker-compose.yml -f docker-compose.cloud.yml config -q
+      - name: Validate logs (ELK) profile
+        run: docker compose --profile logs config -q
       - name: Validate Prometheus config and alert rules
         run: |
           docker run --rm --entrypoint promtool \
