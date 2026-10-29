@@ -45,8 +45,10 @@
 - HTTPS：Caddy 自动证书（Let's Encrypt）；Grafana 走 `/grafana` 子路径
 - 镜像：`workers/Dockerfile.fast-cpu`（CPU torch + 4 模型预下载，支持 HF_ENDPOINT 加速）
 
-## V2.1 升级（阿里云跑通后，替换"云上部署方案"条目）
+## V2.1 升级（云上验证通过后，替换"云上部署方案"条目）
 
+> **当前状态（2026-10-29）**：云端已部署并内部验证通过（阿里云 ECS 2核8G 香港、12 容器、100 任务注入、队列消化、死信 0、指标流动）；**公网 HTTPS 尚待 .xyz 域名注册局 NS 委派同步**（阿里云提示最迟次日）。HTTPS 验证通过后再启用下面的升级条目。
+>
 > 验证通过后，把第 4 条改为：
 >
 > - **云上部署**：在阿里云 ECS 完成 CPU-only 部署并验证（Caddy 自动 HTTPS、安全组最小暴露面、Grafana 面板在线可访问），配套 compose override 与部署文档；GPU 加速路径在本地验证。

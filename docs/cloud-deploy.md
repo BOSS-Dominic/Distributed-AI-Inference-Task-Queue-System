@@ -136,6 +136,26 @@ docker compose -f docker-compose.yml -f docker-compose.cloud.yml down -v
 Then release the VM / domain in the cloud console. Keep the security group
 rules in place for future demos.
 
+## Deployment notes (observed on a real deployment)
+
+- **Overseas regions use direct registries.** On an Aliyun Hong Kong host, the
+  mainland mirror `gcr.m.daocloud.io` returned `unavailable` for cAdvisor while
+  `gcr.io` and Docker Hub pulls worked directly. Set
+  `CADVISOR_IMAGE=gcr.io/cadvisor/cadvisor:latest` (see `.env.example`).
+- **Same-day domain delegation is slow.** A freshly registered `.xyz` domain
+  can take hours (up to the next day) before its NS delegation reaches the
+  registry, so Let's Encrypt returns `NXDOMAIN` at first. Caddy retries
+  automatically — no action required once DNS propagates. Verify with
+  `nslookup -type=NS <domain> 8.8.8.8`; it should return the registrar's
+  nameservers (e.g. `dns23.hichina.com`).
+- **First `up -d` also pulls the observability images** (Prometheus, Grafana,
+  cAdvisor, redis_exporter, Caddy): roughly 700 MB once.
+- **Worker recycling logs are expected**: specialists pop tasks they cannot
+  handle and recycle them to the shared queue
+  (`Cannot handle SA, recycling to queue:light`).
+- **First build downloads all four models** (~1.6 GB); use
+  `--build-arg HF_ENDPOINT=https://hf-mirror.com` on a slow network.
+
 ## Notes
 
 - CPU inference is slower than the GPU host: image captioning takes ~1–3 s per

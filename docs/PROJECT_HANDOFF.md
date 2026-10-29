@@ -50,7 +50,9 @@
 - `docs/cloud-deploy.md`：安全组剧本（只开 22/80/443）、部署/验证/销毁步骤、成本表
 - CI 新增云 compose 合并校验
 
-## 三、当前运行状态（本地 GPU 主机）
+## 三、当前运行状态
+
+### 本地 GPU 主机（开发/演示环境）
 
 - 14 容器全部 Up；Prometheus 5 个 target 全绿（cadvisor/gateway/gpu/prometheus/redis）
 - 已注入 100 任务（25×4 类），网关指标实时流动（audited：IC 25、SA 12、SIM 16、SUM 14；队列深度 light≈24 消化中）
@@ -58,9 +60,18 @@
 - 实测内存：**全量 14 容器 ≈ 3.7 GiB**（云上 CPU 变体约 4.5 GiB → 4核8G 足够）
 - 本地未提交（有意保留）：6 个 Dockerfile 的清华 pip 镜像源；`.env`（gitignored）
 
+### 云上部署（阿里云 ECS，2026-10-29 完成）
+
+- 实例：阿里云 ECS 2核8G（**香港地域，免 ICP 备案**），Ubuntu 22.04，公网 IP 47.238.247.136，域名 **metalblade.xyz**
+- 12 容器全部运行且健康：CPU 化 `worker-cpu-generalist` + 2 个 specialist + 基础设施 + 可观测性栈；GPU 服务按 profile 禁用 ✓
+- **业务链路验证通过**：注入 100 任务（14.89 tasks/s），队列正常消化、死信 0、IC 任务 CPU 推理 ~4s/个 SUCCESS
+- 可观测性栈内部运行正常（Prometheus/Grafana）
+- 端口暴露：**仅 22/80/443**（安全组 22 限源 IP）；Redis/网关/Prometheus/Grafana 全部仅容器内网
+- **唯一待办**：`.xyz` 当日注册的 NS 委派同步延迟（阿里云提示最迟次日）→ Caddy 自动重试证书，DNS 生效后 HTTPS 自动可用，无需人工操作
+
 ## 四、接下来任务路线
 
-### 第 1 步：云上部署（必做，1-2 天，确定性收益）
+### 第 1 步：云上部署（✅ 已完成，待域名 DNS 同步收尾）
 - Day 0（1-2 小时）：注册/学生认证（阿里云或腾讯云）、买 4核8G 学生机（**香港地域免 ICP 备案**，大陆机房需备案 1-3 周）、买域名 + DNS、安全组只开 22（限本机 IP）/80/443
 - Day 1（2-4 小时）：
   ```bash
