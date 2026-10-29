@@ -121,6 +121,23 @@ worker with the Hugging Face mirror, start the stack and wait for the HTTPS
 endpoint — a deployment that never becomes healthy fails the playbook). CI
 syntax-checks the playbooks on every push.
 
+## Logs (optional, local only)
+
+Metrics tell you *that* something is wrong; logs tell you *why*. The gateway
+writes structured JSON events (`task_id`, `task_type`, `status`, `latency_s`,
+`retry_count`) to `./logs/gateway.log`; Filebeat ships them to Elasticsearch
+and Kibana lets you filter failing tasks by `task_type` and `status`:
+
+```bash
+docker compose build fastapi-gateway
+docker compose --profile logs up -d
+# Kibana: http://localhost:5601  ->  index pattern gateway-logs*
+```
+
+The ELK services carry the `logs` profile so they never start on the cloud demo
+(2 vCPU / 8 GB). See `docs/observability-logs.md` for the setup, the Windows
+`vm.max_map_count` prerequisite and the acceptance checklist.
+
 ---
 
 # 分布式 AI 推理任务队列系统

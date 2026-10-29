@@ -26,6 +26,7 @@ services:
       - "8000:8000"
     volumes:
       - ./storage:/app/storage          # sole mount: I/O
+      - ./logs:/app/logs                # JSON logs consumed by Filebeat (ELK profile)
     environment:
       - REDIS_HOST=redis-broker
     depends_on:
@@ -308,3 +309,52 @@ services:
     restart: unless-stopped
     depends_on:
       - prometheus
+
+  #  Logs (optional, local demo): Filebeat -> Elasticsearch -> Kibana 
+  #  Start with: docker compose --profile logs up -d
+  #  Disabled by default: memory-heavy (~2.4 GB) and not needed on the
+  #  CPU-only cloud demo (2 vCPU / 8 GB).
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.24
+    container_name: elasticsearch
+    profiles: ["logs"]
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    restart: unless-stopped
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:7.17.24
+    container_name: kibana
+    profiles: ["logs"]
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    ports:
+      - "5601:5601"
+    depends_on:
+      - elasticsearch
+    restart: unless-stopped
+
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:7.17.24
+    container_name: filebeat
+    profiles: ["logs"]
+    user: root
+    volumes:
+      - ./logs:/logs:ro
+      - ./observability/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+    depends_on:
+      - elasticsearch
+    restart: unless-stopped
+
+volumes:
+  es_data:

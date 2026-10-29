@@ -50,6 +50,14 @@
 - `docs/cloud-deploy.md`：安全组剧本（只开 22/80/443）、部署/验证/销毁步骤、成本表
 - CI 新增云 compose 合并校验
 
+### 7. 日志链路 ELK（本地可选，profile `logs`）
+- 网关输出结构化 JSON（task_id / task_type / status / latency_s / retry_count）到 `./logs/gateway.log`
+- `observability/filebeat/filebeat.yml` → Elasticsearch 7.17（固定 index `gateway-logs`）→ Kibana（按 task_type + status 过滤）
+- compose 用 `profiles: ["logs"]` 隔离：默认 `up -d` 与云上都不会启动（云上 2核8G 内存放不下）
+- 启动：`docker compose build fastapi-gateway && docker compose --profile logs up -d`
+- 文档：`docs/observability-logs.md`（含 Windows `vm.max_map_count` 前置条件与验收清单）
+- **状态：代码已提交，本地待验证 + 截图后启用简历措辞**
+
 ## 三、当前运行状态
 
 ### 本地 GPU 主机（开发/演示环境）

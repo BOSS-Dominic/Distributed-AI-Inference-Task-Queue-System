@@ -38,6 +38,9 @@ __pycache__/
 # Env  
 .env
 
+# Gateway JSON logs (shipped to ELK, regenerated at runtime)
+logs/
+
 # Ansible — real inventory and secrets are machine-local
 ansible/inventory.ini
 ansible/group_vars/*.vault.yml

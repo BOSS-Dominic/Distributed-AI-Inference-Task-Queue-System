@@ -1,6 +1,6 @@
 FROM python:3.10-slim
 
-RUN pip install --no-cache-dir fastapi uvicorn redis python-multipart prometheus-client
+RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple fastapi uvicorn redis python-multipart prometheus-client python-json-logger
 
 WORKDIR /app
 COPY api/main.py .

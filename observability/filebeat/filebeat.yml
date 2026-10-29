@@ -1,0 +1,22 @@
+# Filebeat: ship the gateway's JSON log file to Elasticsearch.
+#
+# The gateway writes structured JSON lines to /app/logs/gateway.log on the host
+# (mounted read-only here). This avoids reading /var/lib/docker/containers and
+# the root privileges that path requires.
+filebeat.inputs:
+  - type: log
+    paths:
+      - /logs/gateway.log
+    json.keys_under_root: true
+    json.add_error_key: true
+    json.overwrite_keys: true
+
+output.elasticsearch:
+  hosts: ["http://elasticsearch:9200"]
+  index: "gateway-logs"
+
+setup.ilm.enabled: false
+setup.template.name: "gateway-logs"
+setup.template.pattern: "gateway-logs*"
+
+logging.level: warning

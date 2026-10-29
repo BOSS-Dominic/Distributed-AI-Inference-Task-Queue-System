@@ -14,11 +14,45 @@ from fastapi import FastAPI, File, Form, UploadFile, BackgroundTasks
 from fastapi.responses import JSONResponse, Response
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%H:%M:%S",
-)
+# --- Logging: structured JSON to stdout and to /app/logs/gateway.log ---------
+# The file copy is shipped to Elasticsearch by Filebeat (ELK profile); the
+# stdout copy keeps docker logs usable.
+LOG_DIR = os.environ.get("LOG_DIR", "/app/logs")
+
+
+def _configure_logging():
+    try:
+        from pythonjsonlogger.json import JsonFormatter  # python-json-logger >= 3
+    except Exception:
+        try:
+            from pythonjsonlogger.jsonlogger import JsonFormatter  # 2.x
+        except Exception:
+            JsonFormatter = None
+
+    if JsonFormatter is not None:
+        formatter = JsonFormatter("%(asctime)s %(levelname)s %(name)s %(message)s")
+    else:
+        formatter = logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(name)s: %(message)s", "%H:%M:%S"
+        )
+
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    console = logging.StreamHandler()
+    console.setFormatter(formatter)
+    root.addHandler(console)
+
+    try:
+        os.makedirs(LOG_DIR, exist_ok=True)
+        file_handler = logging.FileHandler(os.path.join(LOG_DIR, "gateway.log"))
+        file_handler.setFormatter(formatter)
+        root.addHandler(file_handler)
+    except OSError:
+        # Optional: read-only filesystems fall back to stdout only.
+        pass
+
+
+_configure_logging()
 logger = logging.getLogger("gateway")
 
 from shared.task_registry import TASK_REGISTRY, PRIORITY_LEVELS, DEFAULT_PRIORITY
@@ -184,6 +218,16 @@ async def ingest_task(
         r.zadd("queue:delayed", {payload_str: time.time() + delay_s})
         r.hset("active:tasks", task_id, "PENDING")
         TASKS_SUBMITTED.labels(task_type, priority, "true").inc()
+        logger.info(
+            "task accepted",
+            extra={
+                "task_id": task_id,
+                "task_type": task_type,
+                "priority": priority,
+                "status": "ACCEPTED",
+                "delayed": True,
+            },
+        )
         return JSONResponse(
             content={"status": "Accepted", "task_id": task_id, "delayed": True},
             status_code=202,
@@ -204,6 +248,16 @@ async def ingest_task(
 
     r.hset("active:tasks", task_id, "PENDING")
     TASKS_SUBMITTED.labels(task_type, priority, "false").inc()
+    logger.info(
+        "task accepted",
+        extra={
+            "task_id": task_id,
+            "task_type": task_type,
+            "priority": priority,
+            "status": "ACCEPTED",
+            "delayed": False,
+        },
+    )
 
     return JSONResponse(
         content={"status": "Accepted", "task_id": task_id},
@@ -229,6 +283,16 @@ async def write_audit_log(data: dict, background_tasks: BackgroundTasks):
         latency = data.get("execution_latency")
     if latency is not None:
         TASK_LATENCY.labels(task_type).observe(float(latency))
+    logger.info(
+        "task audited",
+        extra={
+            "task_id": data.get("task_id"),
+            "task_type": task_type,
+            "status": status,
+            "latency_s": float(latency) if latency is not None else None,
+            "retry_count": data.get("retry_count", 0),
+        },
+    )
     background_tasks.add_task(_write_to_sqlite, data)
     return {"status": "accepted"}
 
