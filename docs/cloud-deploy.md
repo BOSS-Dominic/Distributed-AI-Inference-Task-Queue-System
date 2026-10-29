@@ -92,6 +92,29 @@ docker exec workload-generator python generator.py 100 20 25 25 25 25
 # then open Grafana and watch queue depth / throughput / failure ratio
 ```
 
+## Automated deployment with Ansible (optional)
+
+The `ansible/` directory turns the manual steps above into one idempotent
+command:
+
+```bash
+export DOMAIN=demo.example.com
+export GRAFANA_ADMIN_PASSWORD=change-me
+cp ansible/inventory.example.ini ansible/inventory.ini   # fill in the host
+ansible-galaxy collection install -r ansible/requirements.yml
+ansible-playbook -i ansible/inventory.ini ansible/playbooks/deploy.yml
+```
+
+What it does: installs Docker Engine + the Compose plugin from the official apt
+repository, configures UFW (22/80/443, deny by default — the rules are added
+before enabling so an SSH session is never locked out), clones the repository to
+`/opt/task-queue`, renders `.env` from `ansible/group_vars/all.yml` and the
+environment variables, builds the CPU worker with the Hugging Face mirror and
+starts the cloud compose stack, then waits for the HTTPS endpoint to answer.
+
+The real `ansible/inventory.ini` (host IP + SSH user) and vault files are
+gitignored. CI runs `ansible-playbook --syntax-check` on every push.
+
 ## Cost (student pricing, mainland China)
 
 | Item | Approx. monthly |

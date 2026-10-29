@@ -1,0 +1,43 @@
+# Deploy the repository and start the cloud compose stack.
+- name: Clone or update the repository
+  ansible.builtin.git:
+    repo: "{{ repo_url }}"
+    dest: "{{ app_dir }}"
+    version: "{{ repo_branch }}"
+    update: true
+    force: true
+
+- name: Write the environment file
+  ansible.builtin.template:
+    src: .env.j2
+    dest: "{{ app_dir }}/.env"
+    mode: "0600"
+
+- name: Build the CPU generalist worker image
+  ansible.builtin.command:
+    cmd: >-
+      docker compose -f docker-compose.yml -f docker-compose.cloud.yml
+      build --build-arg HF_ENDPOINT={{ hf_endpoint }} worker-cpu-generalist
+    chdir: "{{ app_dir }}"
+  changed_when: false
+
+- name: Start the cloud stack
+  ansible.builtin.command:
+    cmd: >-
+      docker compose -f docker-compose.yml -f docker-compose.cloud.yml
+      up -d
+    chdir: "{{ app_dir }}"
+  register: compose_up
+  changed_when: "'Started' in compose_up.stdout or 'Created' in compose_up.stdout"
+
+- name: Wait for the HTTPS endpoint to answer
+  ansible.builtin.uri:
+    url: "{{ cloud_url }}"
+    status_code: 200
+    validate_certs: true
+  register: health
+  until: health.status == 200
+  retries: 30
+  delay: 10
+  failed_when: health.status is defined and health.status != 200
+  ignore_errors: true

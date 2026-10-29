@@ -1,0 +1,19 @@
+# Tear down the deployed stack (keeps the host itself).
+#
+#   ansible-playbook -i inventory.ini playbooks/teardown.yml
+- name: Stop the task-queue stack
+  hosts: cloud
+  become: true
+
+  tasks:
+    - name: Stop containers and remove the deployment directory
+      ansible.builtin.shell: |
+        set -euo pipefail
+        if [ -d "{{ app_dir }}" ]; then
+          cd "{{ app_dir }}"
+          docker compose -f docker-compose.yml -f docker-compose.cloud.yml down -v || true
+        fi
+        rm -rf "{{ app_dir }}"
+      args:
+        executable: /bin/bash
+      changed_when: true

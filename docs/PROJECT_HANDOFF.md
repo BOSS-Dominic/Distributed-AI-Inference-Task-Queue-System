@@ -78,6 +78,12 @@
 - compose → manifests/Helm + Prometheus Operator + Ingress + **queue-depth 自定义指标 HPA**（SRE 亮点）
 - **前提**：先等云主机跑通、拿到真实经验再写，不盲写
 
+### 第 1.5 步：Ansible 部署工程化（可选，1-2 天，穿插在第 1 步后）
+- `ansible/` 骨架已提交：inventory 模板 + deploy.yml（docker/firewall/app 三个 role）+ teardown + group_vars + CI 语法校验
+- 部署命令：`ansible-playbook -i inventory.ini playbooks/deploy.yml`（幂等可重跑）
+- 真实 inventory 与 vault 已 gitignore；CI 跑 `--syntax-check`
+- **时点**：云主机跑通后 1-2 天内完成，不挤占投递/刷题时间
+
 ### 第 3 步：Terraform（砍掉或最后，收益边际）
 
 ## 五、纪律与红线（简历工作区必读）

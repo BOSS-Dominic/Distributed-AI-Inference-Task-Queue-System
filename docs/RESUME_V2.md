@@ -15,6 +15,7 @@
 - **异构调度平台**：9 容器分布式架构（网关 + Redis + GPU/CPU 异构 worker + 负载生成器 + Streamlit 控制面板），实现 FIFO / Priority / SETF / 工作窃取 4 种可运行时热切换的调度策略；完整容错链（混沌注入 → 指数退避重试 → 死信队列重放 → TTL 租约），6 组对照实验 × 5 次重复（115 次运行）量化验证。
 - **可观测性体系**：cAdvisor / redis_exporter / DCGM 采集容器、队列、GPU 指标，网关暴露业务指标（提交/完成计数、延迟直方图、队列深度），Prometheus 时序存储 + Grafana 面板与 8 条告警规则，全部 **provisioning as code** 可一键复现。
 - **CI/CD 流水线**：GitHub Actions 实现 ruff 静态检查 → pytest 契约测试 → compose 配置校验 → promtool 告警规则校验 → 镜像构建 → GHCR 发布，全流程作为 push 门禁（当前全绿）。
+- **部署工程化**（Ansible，可选，跑通后加入）：inventory + role（docker/firewall/app）实现一条命令幂等部署、UFW 最小暴露、环境变量与 vault 管理，CI 校验 playbook 语法。
 - **云上部署方案**：设计并实现 CPU-only 云端部署（阿里云 ECS 方案）——CPU 化通用 worker 镜像、Docker Compose override 环境差异化、Caddy 自动 HTTPS、安全组最小暴露面（仅开 22/80/443），附带安全组与部署文档。
 
 ## 面试叙事（三句话）

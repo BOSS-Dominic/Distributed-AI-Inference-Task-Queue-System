@@ -38,6 +38,10 @@ __pycache__/
 # Env  
 .env
 
+# Ansible — real inventory and secrets are machine-local
+ansible/inventory.ini
+ansible/group_vars/*.vault.yml
+
 # IDE / Agent local config  
 .vscode/
 .claude/

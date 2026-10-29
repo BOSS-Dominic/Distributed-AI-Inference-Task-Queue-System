@@ -1,0 +1,20 @@
+# Deploy the AI task-queue stack onto a cloud VM.
+#
+#   ansible-playbook -i inventory.ini playbooks/deploy.yml
+#
+# Idempotent: re-running converges the host to the configured state
+# (docker installed, firewall open on 22/80/443, repo deployed, stack running).
+- name: Deploy the distributed AI inference task queue
+  hosts: cloud
+  become: true
+
+  pre_tasks:
+    - name: Check that DOMAIN is set
+      ansible.builtin.fail:
+        msg: "Set DOMAIN (and GRAFANA_ADMIN_PASSWORD) in the environment before deploying."
+      when: domain | default('') in ['', 'localhost']
+
+  roles:
+    - docker
+    - firewall
+    - app

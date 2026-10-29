@@ -1,0 +1,27 @@
+# Global variables for the cloud deployment.
+#
+# Secrets are read from the environment (or ansible-vault) — never commit them:
+#   export DOMAIN=demo.example.com
+#   export GRAFANA_ADMIN_PASSWORD=change-me
+#   ansible-playbook playbooks/deploy.yml
+#
+# Or keep them in a vault:
+#   ansible-vault create group_vars/all.vault.yml
+
+domain: "{{ lookup('env', 'DOMAIN') | default('localhost', true) }}"
+cloud_url: "https://{{ domain }}"
+
+grafana_admin_password: "{{ lookup('env', 'GRAFANA_ADMIN_PASSWORD') | default('admin', true) }}"
+
+# Repository that is deployed onto the host.
+repo_url: https://github.com/BOSS-Dominic/Distributed-AI-Inference-Task-Queue-System.git
+repo_branch: feat/observability
+app_dir: /opt/task-queue
+
+# Hugging Face mirror used while building the CPU worker image (speeds up
+# model downloads on a slow network; set to https://huggingface.co to disable).
+hf_endpoint: https://hf-mirror.com
+
+# Optional registry mirror for the CADVISOR_IMAGE override (gcr.io is often
+# blocked in mainland China). Leave empty to use the compose default.
+cadvisor_image: gcr.m.daocloud.io/cadvisor/cadvisor:latest

@@ -1,0 +1,5 @@
+# Collections used by the playbooks.
+#   ansible-galaxy collection install -r ansible/requirements.yml
+collections:
+  - name: community.general   # apt_repository, ufw, systemd
+  - name: community.docker    # docker_compose_v2 (optional, used by the app role)
