@@ -4,9 +4,14 @@ pytest inserts the rootdir of each test module's package, not the repository
 root, so top-level packages need an explicit path entry.
 """
 
+import os
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+# Keep the gateway's JSON log file inside the repository when tests import
+# api.main (the container default is /app/logs).
+os.environ.setdefault("LOG_DIR", "logs")
