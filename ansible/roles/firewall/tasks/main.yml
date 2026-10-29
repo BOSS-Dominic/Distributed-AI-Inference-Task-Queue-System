@@ -6,13 +6,19 @@
     state: present
     update_cache: true
 
-- name: Allow SSH, HTTP and HTTPS
+- name: Allow SSH (optionally restricted to a source IP/CIDR)
+  community.general.ufw:
+    rule: allow
+    port: "22"
+    proto: tcp
+    from_ip: "{{ ssh_allowed_from | default('any') }}"
+
+- name: Allow HTTP and HTTPS
   community.general.ufw:
     rule: allow
     port: "{{ item }}"
     proto: tcp
   loop:
-    - "22"
     - "80"
     - "443"
 

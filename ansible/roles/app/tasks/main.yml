@@ -39,5 +39,5 @@
   until: health.status == 200
   retries: 30
   delay: 10
-  failed_when: health.status is defined and health.status != 200
-  ignore_errors: true
+  # Deliberately no ignore_errors: a deployment that never becomes healthy
+  # must fail the playbook (red CI run), not pass silently.

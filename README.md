@@ -102,6 +102,25 @@ pre-downloaded — see `workers/Dockerfile.fast-cpu`) and disables `dcgm-exporte
 See `docs/cloud-deploy.md` for the security-group rules, deployment and teardown
 steps. The GPU-accelerated path is demonstrated locally with the base compose file.
 
+## Deployment automation (Ansible)
+
+The `ansible/` directory turns the manual deployment into one idempotent command:
+
+```bash
+cd ansible
+cp inventory.example.ini inventory.ini   # fill in the host
+export DOMAIN=demo.example.com GRAFANA_ADMIN_PASSWORD=strong-password
+ansible-galaxy collection install -r requirements.yml
+ansible-playbook -i inventory.ini playbooks/deploy.yml
+```
+
+Roles: `docker` (Docker Engine + Compose plugin from the official apt repository),
+`firewall` (UFW 22/80/443, deny by default — rules are added before enabling so
+an SSH session is never locked out), `app` (clone, render `.env`, build the CPU
+worker with the Hugging Face mirror, start the stack and wait for the HTTPS
+endpoint — a deployment that never becomes healthy fails the playbook). CI
+syntax-checks the playbooks on every push.
+
 ---
 
 # 分布式 AI 推理任务队列系统

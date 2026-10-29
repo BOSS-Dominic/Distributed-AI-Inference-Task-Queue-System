@@ -25,3 +25,8 @@ hf_endpoint: https://hf-mirror.com
 # Optional registry mirror for the CADVISOR_IMAGE override (gcr.io is often
 # blocked in mainland China). Leave empty to use the compose default.
 cadvisor_image: gcr.m.daocloud.io/cadvisor/cadvisor:latest
+
+# Optional: restrict SSH (port 22) to a source IP/CIDR at the host firewall
+# level — defence in depth on top of the cloud security group. Leave commented
+# out to allow SSH from any source.
+# ssh_allowed_from: 203.0.113.0/24
