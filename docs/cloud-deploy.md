@@ -148,6 +148,13 @@ rules in place for future demos.
   automatically — no action required once DNS propagates. Verify with
   `nslookup -type=NS <domain> 8.8.8.8`; it should return the registrar's
   nameservers (e.g. `dns23.hichina.com`).
+- **A persistent `NXDOMAIN` usually means the registrar put the domain on
+  `client hold`** — typically because real-name verification is still pending.
+  Check the registry record directly:
+  `https://rdap.centralnic.com/xyz/domain/<domain>` (or `rdap.org/domain/<domain>`).
+  If `status` contains `client hold`, wait for the registrar's verification to
+  complete (Aliyun: up to the next day); the hold is lifted automatically and
+  resolution starts working.
 - **First `up -d` also pulls the observability images** (Prometheus, Grafana,
   cAdvisor, redis_exporter, Caddy): roughly 700 MB once.
 - **Worker recycling logs are expected**: specialists pop tasks they cannot
