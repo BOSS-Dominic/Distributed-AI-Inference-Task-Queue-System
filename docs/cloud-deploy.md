@@ -100,9 +100,10 @@ command:
 ```bash
 export DOMAIN=demo.example.com
 export GRAFANA_ADMIN_PASSWORD=change-me
-cp ansible/inventory.example.ini ansible/inventory.ini   # fill in the host
-ansible-galaxy collection install -r ansible/requirements.yml
-ansible-playbook -i ansible/inventory.ini ansible/playbooks/deploy.yml
+cd ansible
+cp inventory.example.ini inventory.ini   # fill in the host
+ansible-galaxy collection install -r requirements.yml
+ansible-playbook -i inventory.ini playbooks/deploy.yml
 ```
 
 What it does: installs Docker Engine + the Compose plugin from the official apt
