@@ -68,14 +68,15 @@
 - 实测内存：**全量 14 容器 ≈ 3.7 GiB**（云上 CPU 变体约 4.5 GiB → 4核8G 足够）
 - 本地未提交（有意保留）：6 个 Dockerfile 的清华 pip 镜像源；`.env`（gitignored）
 
-### 云上部署（阿里云 ECS，2026-10-29 完成）
+### 云上部署（阿里云 ECS，2026-10-29 完成，2026-10-30 HTTPS 验收通过）
 
 - 实例：阿里云 ECS 2核8G（**香港地域，免 ICP 备案**），Ubuntu 22.04，公网 IP 47.238.247.136，域名 **metalblade.xyz**
 - 12 容器全部运行且健康：CPU 化 `worker-cpu-generalist` + 2 个 specialist + 基础设施 + 可观测性栈；GPU 服务按 profile 禁用 ✓
 - **业务链路验证通过**：注入 100 任务（14.89 tasks/s），队列正常消化、死信 0、IC 任务 CPU 推理 ~4s/个 SUCCESS
 - 可观测性栈内部运行正常（Prometheus/Grafana）
 - 端口暴露：**仅 22/80/443**（安全组 22 限源 IP）；Redis/网关/Prometheus/Grafana 全部仅容器内网
-- **唯一待办**：`.xyz` 当日注册的 NS 委派同步延迟（阿里云提示最迟次日）→ Caddy 自动重试证书，DNS 生效后 HTTPS 自动可用，无需人工操作
+- **HTTPS 验收通过（2026-10-30）**：DNS 生效后 Caddy 自动签发 Let's Encrypt 证书；`https://metalblade.xyz` 返回 200（Streamlit 面板）、`/grafana` 302 → 登录页、`/grafana/login` 200 ✓
+- 过程中修复：`.xyz` 注册当日实名审核导致 `client hold`（解析挂起）；`handle_path` 剥前缀导致 Grafana 子路径 301 自跳转 → 改为 `handle /grafana*` 透传
 
 ## 四、接下来任务路线
 

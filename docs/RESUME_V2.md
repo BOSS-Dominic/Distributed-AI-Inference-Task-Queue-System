@@ -16,7 +16,7 @@
 - **可观测性体系**：cAdvisor / redis_exporter / DCGM 采集容器、队列、GPU 指标，网关暴露业务指标（提交/完成计数、延迟直方图、队列深度），Prometheus 时序存储 + Grafana 面板与 8 条告警规则，全部 **provisioning as code** 可一键复现；日志侧用 Filebeat → Elasticsearch → Kibana 搭检索链路，能按 `task_type` + `status` 定位失败任务（已实测验证，截图见 `docs/screenshots/kibana-logs.png`）。
 - **CI/CD 流水线**：GitHub Actions 实现 ruff 静态检查 → pytest 契约测试 → compose 配置校验 → promtool 告警规则校验 → 镜像构建 → GHCR 发布，全流程作为 push 门禁（当前全绿）。
 - **部署工程化**（Ansible，可选，跑通后加入）：inventory + role（docker/firewall/app）实现一条命令幂等部署、UFW 最小暴露、环境变量与 vault 管理，CI 校验 playbook 语法。
-- **云上部署方案**：设计并实现 CPU-only 云端部署（阿里云 ECS 方案）——CPU 化通用 worker 镜像、Docker Compose override 环境差异化、Caddy 自动 HTTPS、安全组最小暴露面（仅开 22/80/443），附带安全组与部署文档。
+- **云上部署**：在阿里云 ECS（香港地域，免备案）完成 CPU-only 部署并验证——Caddy 自动 HTTPS（Let's Encrypt）、安全组最小暴露面（仅开 22/80/443）、`https://metalblade.xyz` 面板与 `/grafana` 在线可访问；配套 compose override 环境差异化（GPU→CPU worker、profile 隔离观测组件）与部署文档；GPU 加速路径在本地验证。
 
 ## 面试叙事（三句话）
 
@@ -45,11 +45,11 @@
 - HTTPS：Caddy 自动证书（Let's Encrypt）；Grafana 走 `/grafana` 子路径
 - 镜像：`workers/Dockerfile.fast-cpu`（CPU torch + 4 模型预下载，支持 HF_ENDPOINT 加速）
 
-## V2.1 升级（云上验证通过后，替换"云上部署方案"条目）
+## V2.1 已启用（云上验证通过，2026-10-30）
 
-> **当前状态（2026-10-29）**：云端已部署并内部验证通过（阿里云 ECS 2核8G 香港、12 容器、100 任务注入、队列消化、死信 0、指标流动）；**公网 HTTPS 尚待 .xyz 域名注册局 NS 委派同步**（阿里云提示最迟次日）。HTTPS 验证通过后再启用下面的升级条目。
->
-> 验证通过后，把第 4 条改为：
+> **状态**：阿里云 ECS 已完成 CPU-only 部署，`https://metalblade.xyz`（Streamlit 面板）与
+> `https://metalblade.xyz/grafana`（Grafana）均在线可访问，Caddy 自动签发 Let's Encrypt 证书，
+> 安全组仅开 22/80/443。**简历第 4 条已替换为下面的正式表述**：
 >
 > - **云上部署**：在阿里云 ECS 完成 CPU-only 部署并验证（Caddy 自动 HTTPS、安全组最小暴露面、Grafana 面板在线可访问），配套 compose override 与部署文档；GPU 加速路径在本地验证。
 

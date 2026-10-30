@@ -95,7 +95,11 @@ alone cannot. Filters: `task_type: SUM`, `status: FAILED`.
 
 ## Cloud deployment
 
-The stack can run on a single CPU-only cloud VM with HTTPS — no GPU required:
+The stack can run on a single CPU-only cloud VM with HTTPS — no GPU required.
+A live instance runs on an Aliyun ECS host (Hong Kong region):
+
+- dashboard: <https://metalblade.xyz>
+- Grafana: <https://metalblade.xyz/grafana>
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.cloud.yml up -d --build
