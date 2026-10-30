@@ -49,10 +49,15 @@
 - 线上地址：`https://metalblade.xyz`（basic auth: demo / taskqueue2026）、`https://metalblade.xyz/grafana`（admin 密码私有）
 - 云上实拍：`docs/screenshots/grafana-cloud.png`
 
-### 7. 部署自动化骨架（Ansible，代码完成、CI 校验通过、**未在真实主机执行**）
+### 7. 部署自动化（Ansible，已真机执行 + 幂等验证，2026-10-30）
 - `ansible/`：inventory 模板 + `deploy.yml`（docker/firewall/app 三个 role）+ teardown + group_vars + CI `--syntax-check`
-- 未执行原因：本地 Windows 无法运行 Ansible（`os.get_blocking` 仅 Unix）；云上是手工部署
-- 要验证：WSL 里 `pip install ansible-core` 后对云主机跑一次（15-30 分钟，幂等）
+- 执行方式：Docker 容器作控制节点（`python:3.12-slim` + ansible-core），对云主机 `47.238.247.136` 跑 playbook
+- **结果**：第一次 `ok=18 changed=2 failed=0`，第二次 `ok=18 changed=0 failed=0` → **幂等验证通过**
+- 覆盖内容：装 Docker + Compose 插件、UFW（22/80/443，先放行后启用）、git 同步、`.env` 模板渲染、CPU worker 镜像构建、`up -d`、HTTPS 健康检查（接受 200/401，因为 dashboard 有 basic auth）
+- 执行中修复的三个坑（面试素材）：
+  1. Windows 绑定的目录是 world-writable → Ansible 忽略 `ansible.cfg` → 复制进容器非 world-writable 目录
+  2. `community.general` 的 `yaml` stdout 回调已移除 → 改用 `callback_result_format = yaml`
+  3. compose 显式 `container_name` + 不同 checkout 目录 → 项目名冲突 → `.env` 固定 `COMPOSE_PROJECT_NAME`
 
 ### 8. 文档与截图
 - README 双语：架构/分支/可观测性/CI/CD/云上部署/ELK
@@ -83,7 +88,7 @@
 2. **可观测性体系**：cAdvisor / redis_exporter / DCGM 采集容器、队列、GPU 指标；网关暴露 4 组业务指标（提交/完成计数、延迟直方图、队列深度）；Prometheus + Grafana + 8 条告警规则全部 provisioning as code；日志侧 Filebeat → Elasticsearch → Kibana 按 `task_type` + `status` 定位失败任务（已实测，截图见仓库）。
 3. **CI/CD 流水线**：GitHub Actions 六阶段门禁（ruff / pytest 14 个 / compose 三套校验 + promtool / 镜像构建 / GHCR 发布 / 手动部署），当前全绿。
 4. **云上部署（已完成并验证）**：阿里云 ECS（香港，免备案）CPU-only 部署——compose override 环境差异化、Caddy 自动 HTTPS（Let's Encrypt）、安全组最小暴露面（仅 22/80/443）、dashboard basic auth 加固；线上面板与 Grafana 均可访问。
-5. **部署工程化（骨架）**：Ansible inventory + docker/firewall/app 三个 role 的幂等部署骨架，CI 做语法校验（在真实主机执行待完成）。
+5. **部署工程化**：Ansible（inventory + docker/firewall/app 三个 role）实现一条命令完成云上部署——装 Docker、配置 UFW 最小暴露、渲染 `.env`、构建 CPU worker 镜像、启动并健康检查；**已真机执行并验证幂等**（重复执行 `changed=0`），CI 另做 playbook 语法校验。
 
 ## 五、诚实边界（简历不能越线）
 
@@ -93,7 +98,7 @@
 | ELK 日志链路 | ✅ 实测（本地） | "已实测验证" |
 | CI/CD | ✅ 全绿 | "当前全绿" |
 | 云上部署 + HTTPS | ✅ 实测 | "已完成并验证（线上可访问）" |
-| Ansible | ⚠️ 代码 + CI 语法，**未真机执行** | "实现部署骨架/CI 校验"，**不能写"用 Ansible 部署了云上"** |
+| Ansible | ✅ 已真机执行 + 幂等验证（`changed=0`） | "用 Ansible 一条命令完成云上幂等部署" |
 | K8s 迁移 | ❌ 未开始 | 不写 |
 | 云上 GPU | ❌ 无 | 写"CPU-only 部署，GPU 路径本地验证" |
 | 云上推理性能 | ⚠️ CPU 数据（IC ~4s） | 别和 GPU 数据混用 |

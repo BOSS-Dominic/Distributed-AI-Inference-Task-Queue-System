@@ -98,12 +98,12 @@
 - compose → manifests/Helm + Prometheus Operator + Ingress + **queue-depth 自定义指标 HPA**（SRE 亮点）
 - **前提**：先等云主机跑通、拿到真实经验再写，不盲写
 
-### 第 1.5 步：Ansible 部署工程化（骨架已完成，尚未真实执行）
-- `ansible/` 骨架已提交：inventory 模板 + deploy.yml（docker/firewall/app 三个 role）+ teardown + group_vars + CI 语法校验
-- **状态：代码完成、CI 语法校验通过；但从未在真实主机执行过**（本地 Windows 无法运行 Ansible，云上是手工部署）
-- 要验证只需 15-30 分钟：在 WSL 里 `pip install ansible-core`，对云主机 `ansible-playbook -i inventory.ini playbooks/deploy.yml` 跑一遍（幂等，会收敛而不是重装；会重建 CPU worker 并短暂重启服务）
-- 注意：`group_vars/all.yml` 的 `cadvisor_image` 默认值已改为 `gcr.io` 直连（香港主机用国内镜像源会失败）
-- **时点**：不影响投递；面试前想加一条"Ansible 一键部署"证据时再跑
+### 第 1.5 步：Ansible 部署工程化（✅ 已真机执行 + 幂等验证，2026-10-30）
+- `ansible/`：inventory 模板 + deploy.yml（docker/firewall/app 三个 role）+ teardown + group_vars + CI 语法校验
+- **执行方式**：Docker 容器作控制节点（`python:3.12-slim` + ansible-core），对云主机跑 `playbooks/deploy.yml`
+- **结果**：第一次 `ok=18 changed=2 failed=0`；第二次 `ok=18 changed=0 failed=0` → **幂等验证通过**
+- 修复的三个坑（已记入 `docs/PHASE1_SYNC_REPORT.md`）：world-writable 目录导致 ansible.cfg 被忽略；community.general 的 `yaml` 回调已移除；compose 项目名冲突（用 `COMPOSE_PROJECT_NAME` 固定）
+- 注意事项：`group_vars/all.yml` 的 `cadvisor_image` 用 `gcr.io` 直连（香港主机用国内镜像源会失败）；运行前务必 `export GRAFANA_ADMIN_PASSWORD`，否则 Grafana 密码会被重置为 admin
 
 ### 第 3 步：Terraform（砍掉或最后，收益边际）
 

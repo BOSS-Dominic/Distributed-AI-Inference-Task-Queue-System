@@ -15,7 +15,7 @@
 - **可观测性体系**：cAdvisor / redis_exporter / DCGM 采集容器、队列、GPU 指标，网关暴露 4 组业务指标（提交/完成计数、延迟直方图、队列深度）；Prometheus + Grafana + 8 条告警规则全部 **provisioning as code**；日志侧用 Filebeat → Elasticsearch → Kibana 搭建检索链路，可按 `task_type` + `status` 定位失败任务（已实测验证，截图见仓库 `docs/screenshots/`）。
 - **CI/CD 流水线**：GitHub Actions 六阶段门禁——ruff 静态检查 → pytest 契约测试（14 个）→ compose 三套配置校验 + promtool 告警规则校验 + Ansible 语法校验 → 镜像构建 → GHCR 发布 → 手动部署；当前全绿。
 - **云上部署（已完成并验证）**：阿里云 ECS（香港地域，免备案）CPU-only 部署——compose override 做环境差异化（GPU worker → CPU 化镜像、观测组件 profile 隔离、端口最小化）；Caddy 自动 HTTPS（Let's Encrypt）；安全组仅开 22/80/443；dashboard 加 HTTP basic auth 加固；线上面板与 Grafana 均在线可访问。
-- **部署工程化（骨架）**：Ansible inventory + docker / firewall / app 三个 role 的幂等部署骨架，CI 做 playbook 语法校验（真机执行待完成）。
+- **部署工程化**：Ansible（inventory + docker / firewall / app 三个 role）实现一条命令完成云上部署——安装 Docker、UFW 最小暴露、渲染 `.env`、构建 CPU worker、启动并做 HTTPS 健康检查；**已真机执行并验证幂等**（重复执行 `changed=0`），CI 另做 playbook 语法校验。
 
 ## 面试叙事（四句话）
 
@@ -50,5 +50,5 @@
 ## 使用规则
 
 - 本文档与 `docs/PHASE1_SYNC_REPORT.md`、`docs/PROJECT_HANDOFF.md` 同步维护
-- **不能写**："用 Ansible 部署了云上"（仅骨架 + CI 校验）；"K8s 部署"（未开始）；"云上 GPU 加速"（云上是 CPU）
+- **不能写**："K8s 部署"（未开始）；"云上 GPU 加速"（云上是 CPU）；Ansible 已真机执行 + 幂等验证，**可以写**
 - **本文件所在仓库是公开的**：不要添加电话、邮箱、地址、证件号等联系方式；完整简历只在本地维护
