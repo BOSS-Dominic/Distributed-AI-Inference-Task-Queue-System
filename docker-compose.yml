@@ -349,6 +349,9 @@ services:
     container_name: filebeat
     profiles: ["logs"]
     user: root
+    # On Windows the bind-mounted config is world-writable, which Filebeat
+    # refuses to load by default; --strict.perms=false keeps it working.
+    command: ["-e", "--strict.perms=false"]
     volumes:
       - ./logs:/logs:ro
       - ./observability/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro

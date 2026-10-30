@@ -42,6 +42,11 @@ wsl -d docker-desktop sysctl -w vm.max_map_count=262144
 If Elasticsearch exits with `max virtual memory areas vm.max_map_count [65530]
 is too low`, this is the fix. The setting resets when Docker Desktop restarts.
 
+Note: on Windows the bind-mounted `filebeat.yml` appears as world-writable
+inside the container, and Filebeat refuses to load such a config
+(`config file can only be writable by the owner`). The compose service passes
+`--strict.perms=false` to disable that check; no action needed.
+
 ## Kibana
 
 1. Open <http://localhost:5601> (no login — security is disabled for this local
