@@ -58,9 +58,11 @@ inside the container, and Filebeat refuses to load such a config
 
 ## Acceptance checklist (only add it to the CV when all three pass)
 
-- [ ] Kibana returns failed tasks filtered by `task_type` + `status`
-- [ ] A deliberately induced failure is visible in Kibana within 30 seconds
-- [ ] A screenshot of the search result (results + timeline) is saved
+- [x] Kibana returns failed tasks filtered by `task_type` + `status`
+- [x] A deliberately induced failure is visible in Kibana within 30 seconds
+- [x] A screenshot of the search result (results + timeline) is saved —
+      `docs/screenshots/kibana-logs.png` (index pattern `gateway-logs*`,
+      filters `task_type: SUM` + `status: FAILED`, 11 hits)
 
 ## Deliberately inducing a failure
 

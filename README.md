@@ -78,6 +78,12 @@ Screenshots of the running stack (branch `feat/observability`):
 
 ![Grafana observability dashboard](docs/screenshots/grafana-dashboard.png)
 
+**Kibana — locating failing tasks by `task_type` and `status`**: the JSON log pipeline
+(Filebeat → Elasticsearch → Kibana) answers *why* a task failed, which the metrics
+alone cannot. Filters: `task_type: SUM`, `status: FAILED`.
+
+![Kibana failing-task search](docs/screenshots/kibana-logs.png)
+
 ## CI/CD
 
 `.github/workflows/ci.yml`: `lint` → `test` (pytest) → `validate` (compose, `promtool check config`, `promtool check rules`, dashboard JSON) → `build` (lightweight images) → `publish` (GHCR on `main`) → `deploy` (manual, self-hosted runner labelled `gpu-host`). The 18 GB GPU worker image is built on the GPU host, not in CI.
@@ -178,3 +184,4 @@ docker compose up -d
 
 - **Prometheus**：五个抓取目标全部健康（cadvisor / gateway / gpu / prometheus / redis）
 - **Grafana**：队列深度消化曲线、GPU 利用率/温度、吞吐与 p95 延迟、失败率实时面板
+- **Kibana**：按 `task_type` + `status` 检索失败任务（JSON 日志 → Filebeat → Elasticsearch → Kibana），回答指标答不了的"为什么失败"
