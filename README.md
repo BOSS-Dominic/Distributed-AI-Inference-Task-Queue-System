@@ -101,6 +101,12 @@ A live instance runs on an Aliyun ECS host (Hong Kong region):
 - dashboard: <https://metalblade.xyz>
 - Grafana: <https://metalblade.xyz/grafana>
 
+**Grafana on the live cloud host** (HTTPS via Caddy, Let's Encrypt certificate;
+the GPU panel is intentionally empty — the cloud host is CPU-only and
+`dcgm-exporter` is disabled there):
+
+![Grafana on the cloud host](docs/screenshots/grafana-cloud.png)
+
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.cloud.yml up -d --build
 ```
@@ -189,3 +195,12 @@ docker compose up -d
 - **Prometheus**：五个抓取目标全部健康（cadvisor / gateway / gpu / prometheus / redis）
 - **Grafana**：队列深度消化曲线、GPU 利用率/温度、吞吐与 p95 延迟、失败率实时面板
 - **Kibana**：按 `task_type` + `status` 检索失败任务（JSON 日志 → Filebeat → Elasticsearch → Kibana），回答指标答不了的"为什么失败"
+
+## 云上部署
+
+一套 CPU-only 的云端部署已在阿里云 ECS（香港地域，免 ICP 备案）跑通，Caddy 自动签发 Let's Encrypt 证书：
+
+- 控制面板：<https://metalblade.xyz>
+- Grafana：<https://metalblade.xyz/grafana>（上图为云上 HTTPS 环境的实拍；GPU 面板为空是因为云主机无 GPU、`dcgm-exporter` 已禁用，GPU 加速路径在本地验证）
+
+部署方式：`docker compose -f docker-compose.yml -f docker-compose.cloud.yml up -d`，安全组仅开 22/80/443，Redis / 网关 / Prometheus / Grafana 全部走容器内网。
