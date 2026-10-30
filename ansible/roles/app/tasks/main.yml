@@ -33,10 +33,12 @@
 - name: Wait for the HTTPS endpoint to answer
   ansible.builtin.uri:
     url: "{{ cloud_url }}"
-    status_code: 200
+    # 200 = dashboard reachable without auth; 401 = Caddy is up and the
+    # dashboard is behind basic auth (the public demo configuration).
+    status_code: [200, 401]
     validate_certs: true
   register: health
-  until: health.status == 200
+  until: health.status in [200, 401]
   retries: 30
   delay: 10
   # Deliberately no ignore_errors: a deployment that never becomes healthy
