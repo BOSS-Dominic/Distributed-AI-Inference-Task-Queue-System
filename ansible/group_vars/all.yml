@@ -22,9 +22,10 @@ app_dir: /opt/task-queue
 # model downloads on a slow network; set to https://huggingface.co to disable).
 hf_endpoint: https://hf-mirror.com
 
-# Optional registry mirror for the CADVISOR_IMAGE override (gcr.io is often
-# blocked in mainland China). Leave empty to use the compose default.
-cadvisor_image: gcr.m.daocloud.io/cadvisor/cadvisor:latest
+# Registry for the CADVISOR_IMAGE override. The direct gcr.io image works from
+# overseas/cloud regions (e.g. Aliyun Hong Kong); on a mainland-China network
+# switch to the mirror: gcr.m.daocloud.io/cadvisor/cadvisor:latest
+cadvisor_image: gcr.io/cadvisor/cadvisor:latest
 
 # Optional: restrict SSH (port 22) to a source IP/CIDR at the host firewall
 # level — defence in depth on top of the cloud security group. Leave commented
