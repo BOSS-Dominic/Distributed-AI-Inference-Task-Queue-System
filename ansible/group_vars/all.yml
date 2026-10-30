@@ -18,6 +18,12 @@ repo_url: https://github.com/BOSS-Dominic/Distributed-AI-Inference-Task-Queue-Sy
 repo_branch: feat/observability
 app_dir: /opt/task-queue
 
+# Fixed compose project name: the compose file declares explicit container
+# names, so the project name must not depend on the checkout directory — the
+# Ansible checkout (/opt/task-queue) has to adopt the containers created by
+# the manual checkout instead of conflicting with them.
+compose_project_name: distributed-ai-inference-task-queue-system
+
 # Hugging Face mirror used while building the CPU worker image (speeds up
 # model downloads on a slow network; set to https://huggingface.co to disable).
 hf_endpoint: https://hf-mirror.com
