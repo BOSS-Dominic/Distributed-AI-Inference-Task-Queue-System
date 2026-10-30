@@ -17,7 +17,12 @@
 	}
 
 	# Streamlit control dashboard (websockets are handled by Caddy natively).
+	# It can trigger workload generation and mounts the Docker socket, so the
+	# public demo is protected with HTTP basic auth (credentials are in README).
 	handle {
+		basic_auth {
+			demo $2b$10$hfPNqcWfwRkxlKb0slHvUewrIApL3ozVe3BrNDj7aRpstU47Uq7pe
+		}
 		reverse_proxy streamlit-dashboard:8501
 	}
 }

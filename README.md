@@ -98,8 +98,10 @@ alone cannot. Filters: `task_type: SUM`, `status: FAILED`.
 The stack can run on a single CPU-only cloud VM with HTTPS — no GPU required.
 A live instance runs on an Aliyun ECS host (Hong Kong region):
 
-- dashboard: <https://metalblade.xyz>
-- Grafana: <https://metalblade.xyz/grafana>
+- dashboard: <https://metalblade.xyz> — HTTP basic auth, user `demo`, password
+  `taskqueue2026` (the dashboard mounts the Docker socket, so the public demo is
+  not left open; Grafana keeps its own login)
+- Grafana: <https://metalblade.xyz/grafana> — admin / `StrongPass#2026`
 
 **Grafana on the live cloud host** (HTTPS via Caddy, Let's Encrypt certificate;
 the GPU panel is intentionally empty — the cloud host is CPU-only and

@@ -157,6 +157,11 @@ rules in place for future demos.
   resolution starts working.
 - **First `up -d` also pulls the observability images** (Prometheus, Grafana,
   cAdvisor, redis_exporter, Caddy): roughly 700 MB once.
+- **The dashboard is behind HTTP basic auth** (`basic_auth` in the Caddyfile):
+  it can trigger workload generation and mounts the Docker socket, so the public
+  demo is not left open. Demo credentials are documented in the README; rotate
+  them with `docker run --rm caddy:2-alpine caddy hash-password --plaintext '<new>'`
+  and replace the hash in the Caddyfile, then `docker restart caddy`.
 - **Worker recycling logs are expected**: specialists pop tasks they cannot
   handle and recycle them to the shared queue
   (`Cannot handle SA, recycling to queue:light`).
