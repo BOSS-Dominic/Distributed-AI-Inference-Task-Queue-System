@@ -9,12 +9,15 @@
 # On a bare IP or localhost, Caddy serves plain HTTP on port 80.
 
 {$DOMAIN} {
-	# Grafana under a sub-path (GF_SERVER_ROOT_URL / SERVE_FROM_SUB_PATH are set
-	# in docker-compose.cloud.yml to match).
-	handle_path /grafana/* {
+	# Grafana under a sub-path. The path is passed through *unchanged* (handle,
+	# not handle_path): Grafana is configured with GF_SERVER_ROOT_URL=.../grafana
+	# and SERVE_FROM_SUB_PATH=true, so it serves the /grafana prefix itself.
+	handle /grafana* {
 		reverse_proxy grafana:3000
 	}
 
 	# Streamlit control dashboard (websockets are handled by Caddy natively).
-	reverse_proxy streamlit-dashboard:8501
+	handle {
+		reverse_proxy streamlit-dashboard:8501
+	}
 }
